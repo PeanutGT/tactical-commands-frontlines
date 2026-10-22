@@ -26,8 +26,8 @@ const FF_KILL_SCORE_PER_WEIGHT: int = 5
 ## A chasing unit re-plans its path at most this often when the target moves.
 const CHASE_REPATH_TICKS: int = 10
 ## Body radii (cells) for unit separation.
-const INFANTRY_RADIUS: float = 0.3
-const VEHICLE_RADIUS: float = 0.45
+const INFANTRY_RADIUS: float = 0.5
+const VEHICLE_RADIUS: float = 0.75
 ## Organization (starting values, see progress.md). Suppressed below this
 ## share of max: weapons reload 50% slower and the unit moves 25% slower.
 const SUPPRESSED_BELOW: float = 0.5
@@ -58,7 +58,7 @@ const RETREAT_REFUND: float = 0.5
 ## Section 9 搭載: infantry boards once this close to its transport (starting
 ## value), getting everyone out takes 2 s, and a destroyed transport's
 ## passengers lose half their health.
-const BOARD_RANGE_CELLS: float = 1.2
+const BOARD_RANGE_CELLS: float = 1.5
 const UNLOAD_TICKS: int = 2 * TICK_RATE
 const WRECKED_CARRIER_LOSS: float = 0.5
 

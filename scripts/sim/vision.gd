@@ -21,7 +21,7 @@ const HIGH_GROUND_LEVELS: int = 2
 ## Unit sight is the card's vision times this (Peanut asked for longer sight).
 const VISION_SCALE: float = 1.5
 ## Each HQ watches this far around its centre for its side (starting value).
-const HQ_SIGHT_CELLS: float = 10.0
+const HQ_SIGHT_CELLS: float = 16.0
 ## The ground never changes, so what a cell sees is worked out once per sight
 ## radius and kept; the cache starts over past this many views.
 const MAX_CACHED_VIEWS: int = 4096
