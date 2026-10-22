@@ -39,6 +39,20 @@ var hold: Hold = Hold.NONE
 var hold_ticks: int = 0
 ## Move ordered while held; runs once the unit has left its position.
 var pending_dest: Vector2i = Vector2i(-1, -1)
+## Card it was deployed from; empty for units placed by a scenario.
+var card: StringName = &""
+## Driving back to its spawn zone to leave the field (section 7 撤退);
+## takes no other orders.
+var retreating: bool = false
+## Transport this infantry rides in, 0 when on foot. A passenger is not on
+## the map: it does not move, shoot or get shot, but still counts as weight.
+var carrier_id: int = 0
+## Transport this infantry is walking to board, 0 for none.
+var board_id: int = 0
+## Ids of the units riding in this transport, in boarding order.
+var passengers: PackedInt32Array = PackedInt32Array()
+## Ticks left until the passengers are off, 0 when not unloading.
+var unload_ticks: int = 0
 
 
 func cell() -> Vector2i:
@@ -51,6 +65,11 @@ func is_moving() -> bool:
 
 func is_alive() -> bool:
 	return hp > 0.0
+
+
+## False while riding in a transport.
+func on_map() -> bool:
+	return carrier_id == 0
 
 
 func destination() -> Vector2i:

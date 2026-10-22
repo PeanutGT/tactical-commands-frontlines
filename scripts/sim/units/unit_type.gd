@@ -28,6 +28,8 @@ var cost: int = 0
 var weight: int = 1
 ## Null for unarmed units.
 var weapon: Weapon = null
+## Infantry weight it can carry (section 9 搭載), 0 for none.
+var transport_capacity: int = 0
 
 
 func _init(p_id: StringName = &"", p_name: String = "", p_kind: Kind = Kind.INFANTRY, p_speed_mps: float = 0.0) -> void:
@@ -102,6 +104,10 @@ const CARDS: Array = [
 ]
 
 
+## Section 9: infantry weight each transport carries.
+const TRANSPORT_CAPACITY: Dictionary[StringName, int] = {&"apc": 4, &"ifv": 2, &"transport_heli": 3}
+
+
 static func ids() -> Array[StringName]:
 	var out: Array[StringName] = []
 	for row: Array in CARDS:
@@ -128,6 +134,7 @@ static func _from_row(row: Array) -> UnitType:
 	t.armor = row[9]
 	t.max_org = row[10]
 	t.vision_m = MapScale.standard_cells_to_meters(row[12])
+	t.transport_capacity = TRANSPORT_CAPACITY.get(t.id, 0)
 	var w: Array = row[13]
 	if not w.is_empty():
 		t.weapon = Weapon.new(w[0], MapScale.standard_cells_to_meters(w[1]), w[2], w[3], w[4])

@@ -26,13 +26,15 @@ static func rgba_from_rows(rows: Array[String], palette: Dictionary) -> PackedBy
 
 
 ## Small map for sim tests. Terrain keys: . plain, f forest, r road, ~ water,
-## # building, b bridge, o ford. Height rows use digits 0..3 (empty = flat).
+## # building, b bridge, o ford, p player spawn, e enemy spawn, y point of
+## interest. Height rows use digits 0..3 (empty = flat).
 static func map_from_rows(terrain_rows: Array[String], height_rows: Array[String] = [], meters_per_cell: float = 20.0) -> GameMap:
 	var keys: Dictionary = {
 		".": Terrain.RGB[Terrain.Type.PLAIN], "f": Terrain.RGB[Terrain.Type.FOREST],
 		"r": Terrain.RGB[Terrain.Type.ROAD], "~": Terrain.RGB[Terrain.Type.WATER],
 		"#": Terrain.RGB[Terrain.Type.BUILDING], "b": Terrain.RGB[Terrain.Type.BRIDGE],
-		"o": Terrain.RGB[Terrain.Type.FORD],
+		"o": Terrain.RGB[Terrain.Type.FORD], "p": Terrain.RGB[Terrain.Type.PLAYER_SPAWN],
+		"e": Terrain.RGB[Terrain.Type.ENEMY_SPAWN], "y": Terrain.RGB[Terrain.Type.POI],
 	}
 	var w: int = terrain_rows[0].length()
 	var h: int = terrain_rows.size()

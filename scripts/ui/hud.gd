@@ -5,8 +5,8 @@ extends CanvasLayer
 const TERRAIN_NAMES: Array[String] = [
 	"平地", "樹林", "道路", "水域", "建築", "據點", "敵方出兵區", "我方出兵區", "總部", "橋梁", "淺灘",
 ]
-const HELP_TEXT: String = "左鍵選取／拖曳框選（Shift 加選）｜右鍵移動，點敵人攻擊｜Ctrl+右鍵強制攻擊｜H 駐守｜X 停止
-滾輪縮放｜中鍵或空白鍵+左鍵拖曳平移｜WASD／方向鍵／邊緣捲動｜G 格線｜F 全圖"
+const HELP_TEXT: String = "拖曳手牌到地圖出牌｜左鍵選取／拖曳框選（Shift 加選）｜右鍵移動，點敵人攻擊，點己方運兵車上車｜Ctrl+右鍵強制攻擊
+H 駐守｜X 停止｜R 撤退（退回一半費用）｜U 下車｜滾輪縮放｜中鍵或空白鍵+左鍵拖曳平移｜WASD／方向鍵／邊緣捲動｜G 格線｜F 全圖"
 
 @onready var _info: Label = $Info
 @onready var _help: Label = $Help

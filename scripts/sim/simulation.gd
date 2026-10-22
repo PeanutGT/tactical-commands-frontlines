@@ -45,6 +45,25 @@ const ORG_RECOVER_PER_SEC: float = 3.0
 const ORG_RECOVER_HELD: float = 1.5
 const ORG_RECOVER_FOREST: float = 1.5
 const ORG_RECOVER_MOVING: float = 0.5
+## Section 6 supply per second: BASE × (1 − WEIGHT_SLOWDOWN × weight / cap)
+## + PER_POINT × points held.
+const SUPPLY_BASE: float = 0.5
+const SUPPLY_WEIGHT_SLOWDOWN: float = 0.5
+const SUPPLY_PER_POINT: float = 0.15
+## Cards may also be played this close to the centre of a point the side holds
+## (starting value).
+const DEPLOY_NEAR_POINT_CELLS: float = 4.0
+## Section 7: a retreat gives back half the card's cost.
+const RETREAT_REFUND: float = 0.5
+## Section 9 搭載: infantry boards once this close to its transport (starting
+## value), getting everyone out takes 2 s, and a destroyed transport's
+## passengers lose half their health.
+const BOARD_RANGE_CELLS: float = 1.2
+const UNLOAD_TICKS: int = 2 * TICK_RATE
+const WRECKED_CARRIER_LOSS: float = 0.5
+
+## Why a DEPLOY was refused.
+enum Deploy { OK, NOT_IN_HAND, NO_SUPPLY, OVER_WEIGHT, BAD_PLACE }
 
 
 ## One shot fired this tick, for drawing tracers and blasts.
@@ -71,6 +90,15 @@ var ff_penalty: Array[int] = [0, 0]
 ## Shots fired and units killed in the last tick.
 var shots: Array[Shot] = []
 var deaths: Array[SimUnit] = []
+## Units that drove off the field (retreated) in the last tick.
+var retreated: Array[SimUnit] = []
+## Supply and card cycle per side; deal decks with setup_side.
+var sides: Array[SideState] = [SideState.new(), SideState.new()]
+## GameMap.Side holding each point of interest (map.pois order), or
+## CellGroup.NO_OWNER. Nothing captures points until M5.
+var poi_owner: Array[int] = []
+## Result of each side's last DEPLOY command.
+var last_deploy: Array[Deploy] = [Deploy.OK, Deploy.OK]
 
 var _by_id: Dictionary[int, SimUnit] = {}
 var _next_id: int = 1
@@ -88,6 +116,14 @@ func _init(p_map: GameMap, seed_value: int = 1) -> void:
 	_pathfinder = Pathfinder.new(map)
 	_pathfinder.prepare()
 	_subcells_per_tick_per_mps = MapScale.meters_to_cells(1.0, map.config.meters_per_cell) * SUBCELL / TICK_RATE
+	poi_owner.resize(map.pois.size())
+	poi_owner.fill(CellGroup.NO_OWNER)
+
+
+## Shuffles `deck` (from the seeded PRNG) and deals `side` its opening hand
+## and supply. Call before the first tick.
+func setup_side(side: int, deck: Array[StringName]) -> void:
+	sides[side].setup(deck, map.config.hand_size, map.config.start_supply, rng)
 
 
 func spawn(type: UnitType, side: int, cell: Vector2i) -> SimUnit:
@@ -119,10 +155,14 @@ func step() -> void:
 	tick += 1
 	shots.clear()
 	deaths.clear()
+	retreated.clear()
+	for s: int in sides.size():
+		_update_cards(s)
 	# Hold timers tick before new orders, so a hold takes exactly 4 s from the order.
 	for u: SimUnit in units:
 		_update_hold(u)
 		_update_org(u)
+		_update_unload(u)
 	var later: Array[SimCommand] = []
 	for cmd: SimCommand in _pending:
 		if cmd.tick == tick:
@@ -133,11 +173,13 @@ func step() -> void:
 	_pending = later
 	for u: SimUnit in units:
 		_update_chase(u)
+		_update_board(u)
 	for u: SimUnit in units:
 		_move(u)
 	_separate()
+	_carry()
 	_fire()
-	_remove_dead()
+	_remove_gone()
 
 
 ## Cells per second `u` covers on plain ground at this map's scale.
@@ -192,12 +234,233 @@ func damage_taken(t: SimUnit) -> float:
 	return m
 
 
-## Changes whenever any unit's position, orders or health differ; for replay checks.
+## Changes whenever any unit's position, orders or health differ, or any
+## side's supply or cards; for replay checks.
 func state_hash() -> int:
 	var parts: Array = [tick, rng.state, score]
+	for s: SideState in sides:
+		parts.append_array([s.supply, s.deck, s.hand, s.cooldowns, s.effects])
 	for u: SimUnit in units:
-		parts.append_array([u.id, u.side, u.pos, u.path_index, u.path, u.hp, u.org, u.routing, u.hold, u.target_id])
+		parts.append_array([u.id, u.side, u.pos, u.path_index, u.path, u.hp, u.org, u.routing, u.hold, u.target_id,
+			u.retreating, u.carrier_id, u.board_id, u.unload_ticks])
 	return hash(parts)
+
+
+# --- Cards and supply -------------------------------------------------------
+
+## Weight of everything `side` has on the field, passengers included.
+func field_weight(side: int) -> int:
+	var w: int = 0
+	for u: SimUnit in units:
+		if u.side == side:
+			w += u.type.weight
+	return w
+
+
+func points_held(side: int) -> int:
+	return poi_owner.count(side)
+
+
+## Section 6: supply per second, slower the more weight is on the field.
+func supply_rate(side: int) -> float:
+	var cap: int = map.config.weight_cap
+	var load_share: float = clampf(float(field_weight(side)) / cap, 0.0, 1.0) if cap > 0 else 0.0
+	return SUPPLY_BASE * (1.0 - SUPPLY_WEIGHT_SLOWDOWN * load_share) + SUPPLY_PER_POINT * points_held(side)
+
+
+## Whether `side` could play the card in hand slot `slot` at `cell` now.
+## Support cards ignore `cell`.
+func can_deploy(side: int, slot: int, card: StringName, cell: Vector2i) -> Deploy:
+	var s: SideState = sides[side]
+	if card == SideState.EMPTY or slot < 0 or slot >= s.hand.size() or s.hand[slot] != card:
+		return Deploy.NOT_IN_HAND
+	if s.supply < Card.cost(card):
+		return Deploy.NO_SUPPLY
+	if not Card.is_unit(card):
+		return Deploy.OK
+	if field_weight(side) + Card.weight(card) > map.config.weight_cap:
+		return Deploy.OVER_WEIGHT
+	if not deploy_cell_ok(side, cell, UnitType.of(card).vehicle):
+		return Deploy.BAD_PLACE
+	return Deploy.OK
+
+
+## Section 7: inside the side's own spawn zone, or near a point it holds,
+## on ground the unit can stand on.
+func deploy_cell_ok(side: int, cell: Vector2i, vehicle: bool) -> bool:
+	if not Movement.passable(map, cell, vehicle):
+		return false
+	if map.terrain_at(cell) == _spawn_terrain(side):
+		return true
+	var at: Vector2 = Vector2(cell) + Vector2(0.5, 0.5)
+	for i: int in map.pois.size():
+		if poi_owner[i] == side and at.distance_to(map.pois[i].center) <= DEPLOY_NEAR_POINT_CELLS:
+			return true
+	return false
+
+
+static func _spawn_terrain(side: int) -> int:
+	return Terrain.Type.PLAYER_SPAWN if side == GameMap.Side.PLAYER else Terrain.Type.ENEMY_SPAWN
+
+
+func _spawn_zone(side: int) -> CellGroup:
+	return map.player_spawn if side == GameMap.Side.PLAYER else map.enemy_spawn
+
+
+## Supply, cooldowns and running support effects, once per tick.
+func _update_cards(side: int) -> void:
+	var s: SideState = sides[side]
+	s.gain(supply_rate(side) * TICK_SEC, map.config.supply_cap)
+	s.tick_cooldowns()
+	var still: Array = []
+	for e: Array in s.effects:
+		e[1] -= 1
+		if e[1] > 0:
+			still.append(e)
+			continue
+		if e[0] == &"supply_convoy":
+			s.gain(Card.CONVOY_SUPPLY, map.config.supply_cap)
+		s.return_card(e[0])
+	s.effects = still
+
+
+func _run_deploy(cmd: SimCommand) -> void:
+	var r: Deploy = can_deploy(cmd.side, cmd.slot, cmd.card, cmd.target)
+	last_deploy[cmd.side] = r
+	if r != Deploy.OK:
+		return
+	var s: SideState = sides[cmd.side]
+	s.play(cmd.slot)
+	s.supply -= Card.cost(cmd.card)
+	if Card.is_unit(cmd.card):
+		var u: SimUnit = spawn(UnitType.of(cmd.card), cmd.side, cmd.target)
+		u.card = cmd.card
+	else:
+		s.effects.append([cmd.card, roundi(Card.CONVOY_DELAY_SEC * TICK_RATE)])
+
+
+# --- Retreat and transports -------------------------------------------------
+
+## Section 7: drives home and leaves the field there for half the card's
+## cost back. A side without a spawn zone cannot retreat.
+func _start_retreat(u: SimUnit) -> void:
+	var home: CellGroup = _spawn_zone(u.side)
+	if home == null:
+		return
+	u.retreating = true
+	_drop_target(u)
+	u.unload_ticks = 0
+	var group: Array[SimUnit] = [u]
+	_run_move(group, Vector2i(home.center.floor()))
+
+
+## Infantry heads for `t` and climbs in once next to it.
+func _run_board(group: Array[SimUnit], t: SimUnit) -> void:
+	if t == null or t.type.transport_capacity <= 0 or t.retreating:
+		return
+	for u: SimUnit in group:
+		if u.side != t.side or u.type.kind != UnitType.Kind.INFANTRY:
+			continue
+		u.board_id = t.id
+		u.chase_cell = Vector2i(-1, -1)
+		u.pending_dest = Vector2i(-1, -1)
+		u.clear_path()
+		if u.hold == SimUnit.Hold.ENTERING:
+			u.hold = SimUnit.Hold.NONE
+		elif u.hold == SimUnit.Hold.HELD:
+			u.hold = SimUnit.Hold.LEAVING
+			u.hold_ticks = HOLD_LEAVE_TICKS
+
+
+func free_capacity(t: SimUnit) -> int:
+	var used: int = 0
+	for id: int in t.passengers:
+		used += unit(id).type.weight
+	return t.type.transport_capacity - used
+
+
+func _update_board(u: SimUnit) -> void:
+	if u.board_id == 0:
+		return
+	var t: SimUnit = unit(u.board_id)
+	if t == null or t.retreating or u.routing:
+		u.board_id = 0
+		u.clear_path()
+		return
+	if not u.can_move():
+		return
+	var reach: float = BOARD_RANGE_CELLS * SUBCELL
+	if float((t.pos - u.pos).length_squared()) <= reach * reach:
+		u.board_id = 0
+		u.clear_path()
+		if free_capacity(t) >= u.type.weight:
+			u.carrier_id = t.id
+			u.pos = t.pos
+			_drop_target(u)
+			t.passengers.append(u.id)
+		return
+	var c: Vector2i = t.cell()
+	if c != u.chase_cell and (not u.is_moving() or (tick + u.id) % CHASE_REPATH_TICKS == 0):
+		u.chase_cell = c
+		_path_to(u, c)
+
+
+func _start_unload(t: SimUnit) -> void:
+	if t.passengers.is_empty() or t.unload_ticks > 0:
+		return
+	t.clear_path()
+	t.unload_ticks = UNLOAD_TICKS
+
+
+func _update_unload(t: SimUnit) -> void:
+	if t.unload_ticks <= 0:
+		return
+	t.unload_ticks -= 1
+	if t.unload_ticks == 0:
+		_eject(t)
+
+
+## Puts every passenger down on its own cell around the transport.
+func _eject(t: SimUnit) -> void:
+	var taken: Dictionary[Vector2i, bool] = {}
+	var at: Vector2i = t.cell()
+	for id: int in t.passengers:
+		var p: SimUnit = unit(id)
+		var dest: Vector2i = at
+		for off: Vector2i in slot_offsets(t.passengers.size() + 8):
+			var c: Vector2i = at + off
+			if not taken.has(c) and Movement.passable(map, c, false):
+				dest = c
+				break
+		taken[dest] = true
+		p.carrier_id = 0
+		p.prev_pos = t.pos
+		p.pos = cell_center(dest)
+	t.passengers = PackedInt32Array()
+	t.unload_ticks = 0
+
+
+## Passengers ride along with their transport.
+func _carry() -> void:
+	for u: SimUnit in units:
+		if not u.on_map():
+			var t: SimUnit = unit(u.carrier_id)
+			u.pos = t.pos
+			u.prev_pos = t.prev_pos
+
+
+## Retreating units that reached home leave; one that lost its way (a rally
+## stops it where it is) sets off again.
+func _home_cells_reached() -> Array[SimUnit]:
+	var out: Array[SimUnit] = []
+	for u: SimUnit in units:
+		if not u.retreating or not u.on_map() or not u.is_alive():
+			continue
+		if map.terrain_at(u.cell()) == _spawn_terrain(u.side):
+			out.append(u)
+		elif not u.is_moving() and not u.routing and u.can_move() and (tick + u.id) % CHASE_REPATH_TICKS == 0:
+			_path_to(u, Vector2i(_spawn_zone(u.side).center.floor()))
+	return out
 
 
 static func cell_center(cell: Vector2i) -> Vector2i:
@@ -206,13 +469,29 @@ static func cell_center(cell: Vector2i) -> Vector2i:
 
 # --- Commands ---------------------------------------------------------------
 
+## Routing and retreating units take no orders, nor do passengers.
 func _run(cmd: SimCommand) -> void:
 	var own: Array[SimUnit] = []
 	for id: int in cmd.unit_ids:
 		var u: SimUnit = unit(id)
-		if u != null and u.side == cmd.side and not u.routing and not own.has(u):
+		if u != null and u.side == cmd.side and not u.routing and not u.retreating and u.on_map() and not own.has(u):
 			own.append(u)
+	# Any other order calls off boarding and unloading.
+	if cmd.kind != SimCommand.Kind.LOAD and cmd.kind != SimCommand.Kind.UNLOAD:
+		for u: SimUnit in own:
+			u.board_id = 0
+			u.unload_ticks = 0
 	match cmd.kind:
+		SimCommand.Kind.DEPLOY:
+			_run_deploy(cmd)
+		SimCommand.Kind.RETREAT:
+			for u: SimUnit in own:
+				_start_retreat(u)
+		SimCommand.Kind.LOAD:
+			_run_board(own, unit(cmd.target_unit))
+		SimCommand.Kind.UNLOAD:
+			for u: SimUnit in own:
+				_start_unload(u)
 		SimCommand.Kind.STOP:
 			for u: SimUnit in own:
 				u.clear_path()
@@ -262,7 +541,7 @@ func _run_move(group: Array[SimUnit], target: Vector2i) -> void:
 ## Force-attack: every armed unit in the group chases and shoots `target`,
 ## friend or foe, until it dies or the unit gets another order.
 func _run_attack(group: Array[SimUnit], target: SimUnit) -> void:
-	if target == null:
+	if target == null or not target.on_map():
 		return
 	for u: SimUnit in group:
 		if u.type.weapon == null or u == target or not u.type.weapon.may_target(target.type.kind):
@@ -361,7 +640,7 @@ func _update_chase(u: SimUnit) -> void:
 	if not u.forced_target or u.routing:
 		return
 	var t: SimUnit = unit(u.target_id)
-	if t == null:
+	if t == null or not t.on_map():
 		_drop_target(u)
 		u.clear_path()
 		return
@@ -427,8 +706,12 @@ func _climbing(pos: Vector2i, dir: Vector2) -> bool:
 func _separate() -> void:
 	for i: int in units.size():
 		var a: SimUnit = units[i]
+		if not a.on_map():
+			continue
 		for j: int in range(i + 1, units.size()):
 			var b: SimUnit = units[j]
+			if not b.on_map():
+				continue
 			var min_d: float = (_radius(a) + _radius(b)) * SUBCELL
 			var d: Vector2i = b.pos - a.pos
 			var ls: int = d.length_squared()
@@ -476,7 +759,7 @@ func _fire() -> void:
 			continue
 		if u.cooldown > 0:
 			u.cooldown -= 1
-		if u.routing:
+		if u.routing or not u.on_map():
 			continue
 		var t: SimUnit = _current_target(u)
 		if t == null or u.cooldown > 0:
@@ -502,7 +785,7 @@ func _fire() -> void:
 			var impact: Vector2i = h[2]
 			var r: float = float(_splash_subcells(u.type.weapon))
 			for v: SimUnit in units:
-				if v.type.kind != UnitType.Kind.AIR and float((v.pos - impact).length_squared()) <= r * r:
+				if v.type.kind != UnitType.Kind.AIR and v.on_map() and float((v.pos - impact).length_squared()) <= r * r:
 					_hit(u, v)
 		else:
 			_hit(u, h[1])
@@ -513,19 +796,19 @@ func _fire() -> void:
 func _current_target(u: SimUnit) -> SimUnit:
 	if u.forced_target:
 		var f: SimUnit = unit(u.target_id)
-		return f if f != null and f.is_alive() and in_range(u, f) and u.type.weapon.may_target(f.type.kind) else null
+		return f if f != null and f.is_alive() and f.on_map() and in_range(u, f) and u.type.weapon.may_target(f.type.kind) else null
 	if u.is_moving():
 		u.target_id = 0
 		return null
 	var cur: SimUnit = unit(u.target_id)
-	if cur != null and cur.is_alive() and in_range(u, cur):
+	if cur != null and cur.is_alive() and cur.on_map() and in_range(u, cur):
 		return cur
 	u.target_id = 0
 	var best: SimUnit = null
 	var best_mult: float = 0.0
 	var best_d: int = 0
 	for t: SimUnit in units:
-		if t.side == u.side or not t.is_alive() or not u.type.weapon.may_target(t.type.kind) or not in_range(u, t):
+		if t.side == u.side or not t.is_alive() or not t.on_map() or not u.type.weapon.may_target(t.type.kind) or not in_range(u, t):
 			continue
 		# Shots that cannot get through the armour are not worth firing.
 		var m: float = pen_factor(u, t)
@@ -548,7 +831,7 @@ func _current_target(u: SimUnit) -> SimUnit:
 func _friend_in_blast(u: SimUnit, impact: Vector2i) -> bool:
 	var r: float = float(_splash_subcells(u.type.weapon))
 	for v: SimUnit in units:
-		if v.side == u.side and float((v.pos - impact).length_squared()) <= r * r:
+		if v.side == u.side and v.on_map() and float((v.pos - impact).length_squared()) <= r * r:
 			return true
 	return false
 
@@ -609,16 +892,40 @@ func _penalise(side: int, points: int) -> void:
 	score[side] = maxi(0, score[side] - points)
 
 
-func _remove_dead() -> void:
-	var alive: Array[SimUnit] = []
+## Takes dead and retreated units off the field. A dead unit's card cools down
+## for cost × 3 s; a retreated unit's card goes straight back with half its
+## cost refunded, its passengers' cards too. A destroyed transport's
+## passengers get out hurt.
+func _remove_gone() -> void:
+	var leaving: Dictionary[int, bool] = {}
+	for u: SimUnit in _home_cells_reached():
+		leaving[u.id] = true
+		for id: int in u.passengers:
+			leaving[id] = true
+	var kept: Array[SimUnit] = []
 	for u: SimUnit in units:
-		if u.is_alive():
-			alive.append(u)
-		else:
+		if not u.is_alive():
 			deaths.append(u)
-			_by_id.erase(u.id)
-	units = alive
-	if deaths.is_empty():
+			if not u.passengers.is_empty():
+				for id: int in u.passengers:
+					unit(id).hp *= 1.0 - WRECKED_CARRIER_LOSS
+				_eject(u)
+			if u.card != &"":
+				sides[u.side].start_cooldown(u.card, roundi(Card.cooldown_sec(u.card) * TICK_RATE))
+		elif leaving.has(u.id):
+			retreated.append(u)
+			if u.card != &"":
+				var s: SideState = sides[u.side]
+				s.gain(Card.cost(u.card) * RETREAT_REFUND, map.config.supply_cap)
+				s.return_card(u.card)
+		else:
+			kept.append(u)
+	for u: SimUnit in deaths:
+		_by_id.erase(u.id)
+	for u: SimUnit in retreated:
+		_by_id.erase(u.id)
+	units = kept
+	if deaths.is_empty() and retreated.is_empty():
 		return
 	for u: SimUnit in units:
 		if u.target_id != 0 and not _by_id.has(u.target_id):
