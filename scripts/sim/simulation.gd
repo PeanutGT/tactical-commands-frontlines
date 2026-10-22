@@ -28,6 +28,23 @@ const CHASE_REPATH_TICKS: int = 10
 ## Body radii (cells) for unit separation.
 const INFANTRY_RADIUS: float = 0.3
 const VEHICLE_RADIUS: float = 0.45
+## Organization (starting values, see progress.md). Suppressed below this
+## share of max: weapons reload 50% slower and the unit moves 25% slower.
+const SUPPRESSED_BELOW: float = 0.5
+const SUPPRESSED_COOLDOWN: float = 1.5
+const SUPPRESSED_SPEED: float = 0.75
+## A routing unit moves at this share of its speed and acts again once
+## back to RALLY_AT of max. Without a spawn zone it flees this far from
+## whoever broke it.
+const ROUT_SPEED: float = 0.5
+const RALLY_AT: float = 0.3
+const ROUT_FALLBACK_CELLS: int = 10
+## Recovery starts this long after the last hit.
+const ORG_RECOVER_DELAY_TICKS: int = 4 * TICK_RATE
+const ORG_RECOVER_PER_SEC: float = 3.0
+const ORG_RECOVER_HELD: float = 1.5
+const ORG_RECOVER_FOREST: float = 1.5
+const ORG_RECOVER_MOVING: float = 0.5
 
 
 ## One shot fired this tick, for drawing tracers and blasts.
@@ -80,6 +97,7 @@ func spawn(type: UnitType, side: int, cell: Vector2i) -> SimUnit:
 	u.type = type
 	u.side = side
 	u.hp = type.max_hp
+	u.org = type.max_org
 	u.pos = cell_center(cell)
 	u.prev_pos = u.pos
 	units.append(u)
@@ -104,6 +122,7 @@ func step() -> void:
 	# Hold timers tick before new orders, so a hold takes exactly 4 s from the order.
 	for u: SimUnit in units:
 		_update_hold(u)
+		_update_org(u)
 	var later: Array[SimCommand] = []
 	for cmd: SimCommand in _pending:
 		if cmd.tick == tick:
@@ -145,9 +164,15 @@ func in_range(u: SimUnit, t: SimUnit) -> bool:
 	return float((t.pos - u.pos).length_squared()) <= r * r
 
 
-## Damage one shot of `u` deals to `t` before `t`'s own reductions.
+## Share of `u`'s shots that get through `t`'s armour, 0..1.
+func pen_factor(u: SimUnit, t: SimUnit) -> float:
+	return Weapon.pen_factor(u.type.weapon.penetration, t.type.armor)
+
+
+## Damage one shot of `u` deals to `t` before `t`'s own reductions; a
+## formation that has lost figures hits for less.
 func shot_damage(u: SimUnit, t: SimUnit) -> float:
-	var dmg: float = u.type.weapon.damage * u.type.weapon.multiplier(t.type.kind)
+	var dmg: float = u.type.weapon.damage * u.strength() * pen_factor(u, t)
 	var eu: int = map.elevation_at(u.cell())
 	var et: int = map.elevation_at(t.cell())
 	if eu > et:
@@ -171,7 +196,7 @@ func damage_taken(t: SimUnit) -> float:
 func state_hash() -> int:
 	var parts: Array = [tick, rng.state, score]
 	for u: SimUnit in units:
-		parts.append_array([u.id, u.side, u.pos, u.path_index, u.path, u.hp, u.hold, u.target_id])
+		parts.append_array([u.id, u.side, u.pos, u.path_index, u.path, u.hp, u.org, u.routing, u.hold, u.target_id])
 	return hash(parts)
 
 
@@ -185,7 +210,7 @@ func _run(cmd: SimCommand) -> void:
 	var own: Array[SimUnit] = []
 	for id: int in cmd.unit_ids:
 		var u: SimUnit = unit(id)
-		if u != null and u.side == cmd.side and not own.has(u):
+		if u != null and u.side == cmd.side and not u.routing and not own.has(u):
 			own.append(u)
 	match cmd.kind:
 		SimCommand.Kind.STOP:
@@ -240,7 +265,7 @@ func _run_attack(group: Array[SimUnit], target: SimUnit) -> void:
 	if target == null:
 		return
 	for u: SimUnit in group:
-		if u.type.weapon == null or u == target:
+		if u.type.weapon == null or u == target or not u.type.weapon.may_target(target.type.kind):
 			continue
 		u.target_id = target.id
 		u.forced_target = true
@@ -312,9 +337,28 @@ func _update_hold(u: SimUnit) -> void:
 		u.pending_dest = Vector2i(-1, -1)
 
 
+## Recovers organization once the unit has not been hit for a while; faster
+## held or in forest, slower on the move (but not while routing). A routing
+## unit rallies at RALLY_AT and stops where it is.
+func _update_org(u: SimUnit) -> void:
+	if u.org >= u.type.max_org or tick - u.last_hit_tick < ORG_RECOVER_DELAY_TICKS:
+		return
+	var rate: float = ORG_RECOVER_PER_SEC
+	if u.is_held():
+		rate *= ORG_RECOVER_HELD
+	if map.terrain_at(u.cell()) == Terrain.Type.FOREST:
+		rate *= ORG_RECOVER_FOREST
+	if u.is_moving() and not u.routing:
+		rate *= ORG_RECOVER_MOVING
+	u.org = minf(u.type.max_org, u.org + rate * TICK_SEC)
+	if u.routing and u.org >= u.type.max_org * RALLY_AT:
+		u.routing = false
+		u.clear_path()
+
+
 ## Force-attacking units walk until the target is in range, re-planning as it moves.
 func _update_chase(u: SimUnit) -> void:
-	if not u.forced_target:
+	if not u.forced_target or u.routing:
 		return
 	var t: SimUnit = unit(u.target_id)
 	if t == null:
@@ -337,6 +381,10 @@ func _move(u: SimUnit) -> void:
 	if not u.is_moving():
 		return
 	var base: float = u.type.speed_mps * _subcells_per_tick_per_mps
+	if u.routing:
+		base *= ROUT_SPEED
+	elif u.is_suppressed():
+		base *= SUPPRESSED_SPEED
 	# Distance left this tick, as a fraction of a full tick at the current speed.
 	var time_left: float = 1.0
 	while time_left > 0.0 and u.is_moving():
@@ -428,10 +476,19 @@ func _fire() -> void:
 			continue
 		if u.cooldown > 0:
 			u.cooldown -= 1
+		if u.routing:
+			continue
 		var t: SimUnit = _current_target(u)
 		if t == null or u.cooldown > 0:
 			continue
-		u.cooldown = maxi(1, roundi(u.type.weapon.cooldown_sec * TICK_RATE))
+		var w: Weapon = u.type.weapon
+		if u.burst_left <= 0:
+			u.burst_left = w.burst
+		u.burst_left -= 1
+		var wait: float = w.burst_interval_sec if u.burst_left > 0 else w.cooldown_sec
+		if u.is_suppressed():
+			wait *= SUPPRESSED_COOLDOWN
+		u.cooldown = maxi(1, roundi(wait * TICK_RATE))
 		hits.append([u, t, t.pos])
 		var s: Shot = Shot.new()
 		s.side = u.side
@@ -445,11 +502,10 @@ func _fire() -> void:
 			var impact: Vector2i = h[2]
 			var r: float = float(_splash_subcells(u.type.weapon))
 			for v: SimUnit in units:
-				if float((v.pos - impact).length_squared()) <= r * r:
-					_damage(u, v, shot_damage(u, v))
+				if v.type.kind != UnitType.Kind.AIR and float((v.pos - impact).length_squared()) <= r * r:
+					_hit(u, v)
 		else:
-			var t: SimUnit = h[1]
-			_damage(u, t, shot_damage(u, t))
+			_hit(u, h[1])
 
 
 ## The unit `u` shoots at this tick, or null. Forced targets are kept until
@@ -457,7 +513,7 @@ func _fire() -> void:
 func _current_target(u: SimUnit) -> SimUnit:
 	if u.forced_target:
 		var f: SimUnit = unit(u.target_id)
-		return f if f != null and f.is_alive() and in_range(u, f) else null
+		return f if f != null and f.is_alive() and in_range(u, f) and u.type.weapon.may_target(f.type.kind) else null
 	if u.is_moving():
 		u.target_id = 0
 		return null
@@ -469,13 +525,16 @@ func _current_target(u: SimUnit) -> SimUnit:
 	var best_mult: float = 0.0
 	var best_d: int = 0
 	for t: SimUnit in units:
-		if t.side == u.side or not t.is_alive() or not in_range(u, t):
+		if t.side == u.side or not t.is_alive() or not u.type.weapon.may_target(t.type.kind) or not in_range(u, t):
+			continue
+		# Shots that cannot get through the armour are not worth firing.
+		var m: float = pen_factor(u, t)
+		if m <= 0.0:
 			continue
 		if u.type.weapon.is_area() and _friend_in_blast(u, t.pos):
 			continue
-		var m: float = u.type.weapon.multiplier(t.type.kind)
 		var d: int = (t.pos - u.pos).length_squared()
-		# Most effective target first, then the closest; ids break ties.
+		# Best penetration first, then the closest; ids break ties.
 		if best == null or m > best_mult or (m == best_mult and d < best_d):
 			best = t
 			best_mult = m
@@ -498,10 +557,19 @@ func _splash_subcells(w: Weapon) -> int:
 	return roundi(MapScale.meters_to_cells(w.splash_m, map.config.meters_per_cell) * SUBCELL)
 
 
-func _damage(src: SimUnit, v: SimUnit, amount: float) -> void:
+## One shot of `src` landing on `v`: damage, and organization lost to
+## suppression. Both shrink with cover and with armour the shot cannot pierce.
+func _hit(src: SimUnit, v: SimUnit) -> void:
 	if not v.is_alive():
 		return
-	var dealt: float = minf(amount * damage_taken(v), v.hp)
+	var taken: float = damage_taken(v)
+	var sup: float = src.type.weapon.suppression * src.strength() * pen_factor(src, v) * taken
+	if sup > 0.0:
+		v.org = maxf(0.0, v.org - sup)
+		v.last_hit_tick = tick
+		if v.org <= 0.0 and not v.routing:
+			_rout(v, src)
+	var dealt: float = minf(shot_damage(src, v) * taken, v.hp)
 	v.hp -= dealt
 	if src.side != v.side:
 		return
@@ -513,6 +581,27 @@ func _damage(src: SimUnit, v: SimUnit, amount: float) -> void:
 		_ff_damage_penalised[s] = owed
 	if not v.is_alive():
 		_penalise(s, v.type.weight * FF_KILL_SCORE_PER_WEIGHT)
+
+
+## Out of organization: drops every order, leaves its position and walks
+## slowly back to its spawn zone (or away from `src`) until it rallies.
+## Enemies that keep after it can wipe it out, since it does not fire back.
+func _rout(u: SimUnit, src: SimUnit) -> void:
+	u.routing = true
+	_drop_target(u)
+	u.pending_dest = Vector2i(-1, -1)
+	u.hold = SimUnit.Hold.NONE
+	_path_to(u, _rout_cell(u, src))
+
+
+func _rout_cell(u: SimUnit, src: SimUnit) -> Vector2i:
+	var home: CellGroup = map.player_spawn if u.side == GameMap.Side.PLAYER else map.enemy_spawn
+	if home != null:
+		return Vector2i(home.center.round())
+	var away: Vector2 = Vector2(u.pos - src.pos)
+	away = away.normalized() if away != Vector2.ZERO else Vector2(1.0, 0.0)
+	var c: Vector2i = u.cell() + Vector2i((away * ROUT_FALLBACK_CELLS).round())
+	return Vector2i(clampi(c.x, 0, map.width - 1), clampi(c.y, 0, map.height - 1))
 
 
 func _penalise(side: int, points: int) -> void:

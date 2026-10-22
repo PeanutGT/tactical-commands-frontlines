@@ -92,10 +92,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## at the next one.
 func _spawn_placeholders() -> void:
 	var ours: Array[UnitType] = [
-		UnitType.infantry(), UnitType.infantry(), UnitType.infantry(), UnitType.infantry(),
+		UnitType.infantry(), UnitType.infantry(), UnitType.infantry(), UnitType.of(&"javelin"),
 		UnitType.scout_car(), UnitType.tank(), UnitType.tank(), UnitType.mortar(),
 	]
-	var theirs: Array[UnitType] = [UnitType.infantry(), UnitType.infantry(), UnitType.tank()]
+	var theirs: Array[UnitType] = [UnitType.infantry(), UnitType.of(&"bazooka"), UnitType.tank()]
 	if map.player_spawn == null or map.enemy_spawn == null:
 		return
 	var home: Vector2 = map.player_spawn.center
