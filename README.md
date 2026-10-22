@@ -6,7 +6,7 @@ PC RTS card game built with Godot 4 (GDScript). Design: `docs/TCF_交接摘要.m
 1. Install Godot 4.7 (standard build, not .NET): https://godotengine.org/download
 2. Open Godot, Import, pick `project.godot` in this folder, then press F5.
 
-Controls: left-click select, left-drag box select (Shift adds), right-click move, X stop. Camera: wheel zoom, middle-drag or Space + left-drag pan, WASD / arrows / screen edge scroll, F fit map, G grid.
+Controls: left-click select, left-drag box select (Shift adds), right-click move (on an enemy: attack), Ctrl + right-click force-attack any unit, H hold position (infantry), X stop. Camera: wheel zoom, middle-drag or Space + left-drag pan, WASD / arrows / screen edge scroll, F fit map, G grid.
 
 ## Test
 ```sh
