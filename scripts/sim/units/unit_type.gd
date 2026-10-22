@@ -30,6 +30,9 @@ var weight: int = 1
 var weapon: Weapon = null
 ## Infantry weight it can carry (section 9 搭載), 0 for none.
 var transport_capacity: int = 0
+## A building (the HQ): never moves, routs or takes orders, and is always
+## known to both sides.
+var structure: bool = false
 
 
 func _init(p_id: StringName = &"", p_name: String = "", p_kind: Kind = Kind.INFANTRY, p_speed_mps: float = 0.0) -> void:
@@ -108,6 +111,14 @@ const CARDS: Array = [
 const INDIRECT_FIRE: Array[StringName] = [&"spg", &"mrl", &"mortar"]
 ## Section 9: infantry weight each transport carries.
 const TRANSPORT_CAPACITY: Dictionary[StringName, int] = {&"apc": 4, &"ifv": 2, &"transport_heli": 3}
+## Balance (Peanut, 2026-10-23): every card's weight, and every transport's
+## capacity with it, is the doc's value × 1.5 rounded up (infantry 2 → 3,
+## tank 5 → 8, APC carries 6), so fewer units fit under the cap.
+const WEIGHT_SCALE: float = 1.5
+
+
+static func scaled_weight(w: int) -> int:
+	return ceili(w * WEIGHT_SCALE)
 
 
 static func ids() -> Array[StringName]:
@@ -129,14 +140,14 @@ static func _from_row(row: Array) -> UnitType:
 	var t: UnitType = UnitType.new(row[0], row[1], row[5], MapScale.standard_cells_to_meters(row[11]))
 	t.faction = row[2]
 	t.cost = row[3]
-	t.weight = row[4]
+	t.weight = scaled_weight(row[4])
 	t.echelon = row[6]
 	t.figures = row[7]
 	t.max_hp = row[8]
 	t.armor = row[9]
 	t.max_org = row[10]
 	t.vision_m = MapScale.standard_cells_to_meters(row[12])
-	t.transport_capacity = TRANSPORT_CAPACITY.get(t.id, 0)
+	t.transport_capacity = scaled_weight(TRANSPORT_CAPACITY.get(t.id, 0))
 	var w: Array = row[13]
 	if not w.is_empty():
 		t.weapon = Weapon.new(w[0], MapScale.standard_cells_to_meters(w[1]), w[2], w[3], w[4])
@@ -144,6 +155,35 @@ static func _from_row(row: Array) -> UnitType:
 		t.weapon.splash_m = MapScale.standard_cells_to_meters(w[6])
 		t.weapon.burst = w[7]
 		t.weapon.indirect = INDIRECT_FIRE.has(t.id)
+	return t
+
+
+## Section 11 總部: 2000 health and a self-defence gun (range 8, damage 30).
+## Armour, penetration, suppression and reload are starting values.
+static func hq() -> UnitType:
+	var t: UnitType = UnitType.new(&"hq", "總部", Kind.ARMOR, 0.0)
+	t.structure = true
+	t.echelon = Echelon.COMPANY
+	t.max_hp = 2000.0
+	t.max_org = 1000000.0
+	t.weight = 0
+	t.weapon = Weapon.new(30.0, MapScale.standard_cells_to_meters(8.0), 3.0, 14, 30.0)
+	return t
+
+
+## 運補車隊 truck (progress.md pacing decisions): one unarmed truck, 120
+## health, armour 1, as fast as a scout car, weighs nothing. Organization and
+## sight are starting values.
+static func supply_truck() -> UnitType:
+	var t: UnitType = UnitType.new(&"supply_truck", "運補卡車", Kind.ARMOR, MapScale.standard_cells_to_meters(3.5))
+	t.faction = &"common"
+	t.echelon = Echelon.PLATOON
+	t.figures = 1
+	t.max_hp = 120.0
+	t.armor = 1
+	t.max_org = 80.0
+	t.weight = 0
+	t.vision_m = MapScale.standard_cells_to_meters(7.0)
 	return t
 
 

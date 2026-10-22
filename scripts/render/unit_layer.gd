@@ -3,8 +3,9 @@ extends Node2D
 ## Draws each formation as dev-style figures (soldiers = dots, vehicles =
 ## boxes pointing where it drives) on a faint footprint, one figure per
 ## surviving soldier or vehicle, interpolating between the last two simulation
-## ticks, plus health and organization bars, hold-position brackets, tracers,
-## blasts and wrecks.
+## ticks, plus health and organization bars, hold-position brackets, engineer
+## work rings, support-card markers, tracers, blasts and wrecks. HQs are drawn
+## by MapMarkers.
 
 const INFANTRY_RADIUS: float = 0.4  # cells, footprint
 const SOLDIER_RADIUS: float = 0.085  # cells
@@ -31,6 +32,11 @@ const BLAST_COLOR: Color = Color("ffb04a")
 ## Retreating formations are drawn see-through.
 const RETREAT_ALPHA: float = 0.5
 const PASSENGER_PIP: float = 0.18  # cells
+const SHIELD: Color = Color("d8e4f0")
+const BUFF: Color = Color("9cf06a")
+const WORK: Color = Color("ffd24a")
+## Click radius of an HQ, in cells.
+const HQ_PICK: float = 1.6
 ## Everything drawn for a unit is this much bigger than the sizes above.
 const UNIT_SCALE: float = 2.0
 
@@ -63,6 +69,8 @@ func world_pos(u: SimUnit) -> Vector2:
 
 ## Rough radius in world pixels, used for clicking on a unit.
 func pick_radius(u: SimUnit) -> float:
+	if u.type.structure:
+		return HQ_PICK * float(_style.cell_px)
 	var cells: float = vehicle_footprint(u.type).x * 0.5 if u.type.vehicle else INFANTRY_RADIUS
 	return maxf(cells, 0.4) * UNIT_SCALE * float(_style.cell_px)
 
@@ -131,7 +139,7 @@ func _draw() -> void:
 	# Unit figures, bars and markers are drawn UNIT_SCALE times their cell size.
 	s *= UNIT_SCALE
 	for u: SimUnit in sim.units:
-		if not shows(u):
+		if not shows(u) or u.type.structure:
 			continue
 		var p: Vector2 = world_pos(u)
 		var fill: Color = _style.unit_colors[u.side]
@@ -153,6 +161,12 @@ func _draw() -> void:
 			_draw_hold(u, p, s)
 		if not u.passengers.is_empty():
 			_draw_passengers(u, p, s)
+		if u.work != SimUnit.Work.NONE:
+			var total: int = Bridges.PLANT_TICKS if u.work == SimUnit.Work.DEMOLISH else Bridges.REPAIR_TICKS
+			var done: float = 1.0 - float(u.work_ticks) / total
+			draw_arc(p, 0.75 * s, -PI * 0.5, -PI * 0.5 + TAU * done, 32, WORK, 2.5, true)
+		if u.aps_ticks > 0 or u.boost_ticks > 0:
+			draw_arc(p, 0.85 * s, 0.0, TAU, 32, Color(BUFF, 0.7), 1.5, true)
 		if selected.has(u.id):
 			draw_arc(p, pick_radius(u) + 3.0, 0.0, TAU, 24, _style.selection, 1.5, true)
 		if selected.has(u.id) or u.hp < u.type.max_hp or u.org < u.type.max_org:
@@ -270,6 +284,9 @@ func _draw_bars(u: SimUnit, p: Vector2, s: float) -> void:
 	draw_rect(Rect2(otop, Vector2(size.x * o, size.y)), oc)
 	if u.routing:
 		draw_rect(Rect2(otop, size), ORG_ROUTING, false, 1.0)
+	if u.shield > 0.0:
+		var stop: Vector2 = top - Vector2(0.0, size.y + 1.0)
+		draw_rect(Rect2(stop, Vector2(size.x * clampf(u.shield / Support.ADDON_SHIELD, 0.0, 1.0), size.y)), SHIELD)
 
 
 func _draw_path(u: SimUnit, s: float) -> void:

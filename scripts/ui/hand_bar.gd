@@ -2,8 +2,9 @@ class_name HandBar
 extends Control
 ## Bottom-of-screen hand (section 7): one card per hand slot, with supply,
 ## field weight, the draw pile and cooling cards above it. Press a card and
-## drag it onto the map to play it; right-click or drop it back on the bar to
-## cancel. Reads the simulation, never changes it.
+## drag it onto the map to play it, or press 1-4 to pick a card up and click
+## the map; right-click or drop it back on the bar to cancel. Reads the
+## simulation, never changes it.
 
 signal card_dropped(slot: int, card: StringName, screen_pos: Vector2)
 ## `card` is SideState.EMPTY when the drag ends.
@@ -26,6 +27,8 @@ var _bar: HBoxContainer
 var _drag_card: StringName = SideState.EMPTY
 var _message: String = ""
 var _message_left: float = 0.0
+## Standing instruction (picking a 運補車隊 destination), empty for none.
+var _prompt: String = ""
 ## Last texts shown, so styles are only rebuilt when the hand changes.
 var _shown: Array[StringName] = []
 
@@ -94,6 +97,11 @@ func flash(text: String) -> void:
 	_message_left = MESSAGE_SEC
 
 
+## Shows `text` over the hand until it is cleared with "".
+func set_prompt(text: String) -> void:
+	_prompt = text
+
+
 func _process(delta: float) -> void:
 	if _sim == null:
 		return
@@ -104,14 +112,20 @@ func _process(delta: float) -> void:
 	var status: String = "補給 %.1f / %d（每秒 +%.2f）｜權重 %d / %d" % [s.supply, _sim.map.config.supply_cap, _sim.supply_rate(side), weight, cap]
 	if _message_left > 0.0:
 		status += "｜" + _message
+	elif _prompt != "":
+		status += "｜" + _prompt
 	_status.text = status
-	_status.add_theme_color_override("font_color", UiTheme.BAD if _message_left > 0.0 else UiTheme.TEXT)
+	_status.add_theme_color_override("font_color", UiTheme.BAD if _message_left > 0.0 else (UiTheme.GOOD if _prompt != "" else UiTheme.TEXT))
 
 	var cooling: PackedStringArray = PackedStringArray()
 	for c: Array in s.cooldowns:
 		cooling.append("%s %d 秒" % [Card.display_name(c[0]), ceili(float(c[1]) / Simulation.TICK_RATE)])
-	for e: Array in s.effects:
-		cooling.append("%s 生效中" % Card.display_name(e[0]))
+	for e: SupportEffect in _sim.effects:
+		if e.side == side:
+			cooling.append("%s 生效中" % Card.display_name(e.card))
+	for u: SimUnit in _sim.units:
+		if u.side == side and u.is_convoy():
+			cooling.append("運補卡車在路上（%d 格）" % floori(u.convoy_cells))
 	var next: String = Card.display_name(s.deck[0]) if not s.deck.is_empty() else "（空）"
 	_queue.text = "牌庫 %d 張，下一張：%s" % [s.deck.size(), next]
 	if not cooling.is_empty():
@@ -123,7 +137,7 @@ func _process(delta: float) -> void:
 			_shown[i] = id
 			_restyle(i, id)
 		var playable: bool = id != SideState.EMPTY and s.supply >= Card.cost(id) \
-			and weight + Card.weight(id) <= cap
+			and weight + Card.weight(id) <= cap and _sim.winner == Simulation.NO_WINNER
 		_cards[i].modulate = Color(1, 1, 1, 0.35 if i == dragging_slot else 1.0) if playable \
 			else Color(0.55, 0.55, 0.55, 0.8)
 	if dragging_slot >= 0:
@@ -147,15 +161,40 @@ func _on_card_input(event: InputEvent, slot: int) -> void:
 	var mb: InputEventMouseButton = event as InputEventMouseButton
 	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
+	if _pick_up(slot):
+		accept_event()
+
+
+## Starts carrying the card in `slot`; false when there is none to carry.
+func _pick_up(slot: int) -> bool:
+	if _sim == null or slot >= _sim.sides[side].hand.size():
+		return false
 	var id: StringName = _sim.sides[side].hand[slot]
-	if id == SideState.EMPTY:
-		return
+	if id == SideState.EMPTY or _sim.winner != Simulation.NO_WINNER:
+		return false
 	dragging_slot = slot
 	_drag_card = id
 	_ghost.text = Card.display_name(id)
 	_ghost.visible = true
-	accept_event()
 	drag_changed.emit(id)
+	return true
+
+
+## 1-4 pick up the card in that hand slot (pressing it again puts it down).
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key: InputEventKey = event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	var slot: int = key.physical_keycode - KEY_1
+	if slot < 0 or slot > 8:
+		return
+	if slot == dragging_slot:
+		_end_drag()
+	elif _pick_up(slot):
+		pass
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 ## Runs before the map's own input, so a drag's release never selects units.
@@ -167,6 +206,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 		_end_drag()
+	elif mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+		pass  # a card picked up with 1-4 is played on release; keep the press off the map
 	elif mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 		var slot: int = dragging_slot
 		var card: StringName = _drag_card

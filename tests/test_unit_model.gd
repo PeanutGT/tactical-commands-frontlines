@@ -92,7 +92,7 @@ func test_rifles_partly_hurt_light_armour() -> void:
 	sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(UnitType.Kind.ARMOR, 2), E, Vector2i(4, 0))
 	sim.step()
-	check(_near(_lost(t), 10.0 * 2.0 / 3.0), "pen 1 vs armour 2, lost %f" % _lost(t))
+	check(_near(_lost(t), 10.0 * 2.0 / 3.0 * Simulation.DAMAGE_SCALE), "pen 1 vs armour 2, lost %f" % _lost(t))
 
 
 func test_anti_tank_pierces() -> void:
@@ -100,12 +100,12 @@ func test_anti_tank_pierces() -> void:
 	sim.spawn(UnitType.of(&"bazooka"), P, Vector2i(0, 0))
 	var mbt: SimUnit = sim.spawn(_dummy(UnitType.Kind.ARMOR, 14), E, Vector2i(4, 0))
 	sim.step()
-	check(_near(_lost(mbt), 40.0), "pen 16 vs MBT armour 14, lost %f" % _lost(mbt))
+	check(_near(_lost(mbt), 40.0 * Simulation.DAMAGE_SCALE), "pen 16 vs MBT armour 14, lost %f" % _lost(mbt))
 	var sim2: Simulation = _sim(["......."])
 	sim2.spawn(UnitType.of(&"bazooka"), P, Vector2i(0, 0))
 	var heavy: SimUnit = sim2.spawn(_dummy(UnitType.Kind.ARMOR, 18), E, Vector2i(4, 0))
 	sim2.step()
-	check(_near(_lost(heavy), 40.0 / 3.0), "two short vs heavy tank, lost %f" % _lost(heavy))
+	check(_near(_lost(heavy), 40.0 / 3.0 * Simulation.DAMAGE_SCALE), "two short vs heavy tank, lost %f" % _lost(heavy))
 
 
 func test_anti_armour_weapons_ignore_infantry() -> void:
@@ -141,9 +141,9 @@ func test_suppressed_unit_reloads_slower() -> void:
 	check(u.is_suppressed(), "under half")
 	sim.step()
 	_run(sim, 29)
-	check(_near(_lost(t), 10.0), "no second shot before 1.5 s, lost %f" % _lost(t))
+	check(_near(_lost(t), 10.0 * Simulation.DAMAGE_SCALE), "no second shot before 1.5 s, lost %f" % _lost(t))
 	sim.step()
-	check(_near(_lost(t), 20.0), "second shot at 1.5 s, lost %f" % _lost(t))
+	check(_near(_lost(t), 20.0 * Simulation.DAMAGE_SCALE), "second shot at 1.5 s, lost %f" % _lost(t))
 
 
 func test_zero_organization_routs_until_rally() -> void:
@@ -164,7 +164,7 @@ func test_zero_organization_routs_until_rally() -> void:
 	check(u.destination().x < 2, "ignores orders")
 	check_eq(sim.shots.size(), 0, "and does not fire")
 	var walked: float = float(start.x - u.pos.x) / Simulation.SUBCELL
-	check(absf(walked - 0.75) < 0.05, "half speed, %f cells in 1 s" % walked)
+	check(absf(walked - 0.75 * Simulation.SPEED_SCALE) < 0.05, "half speed, %f cells in 1 s" % walked)
 	# 4 s before recovery starts, then 3/s (no moving penalty) up to 30.
 	var rallied_at: int = -1
 	for i: int in 20 * Simulation.TICK_RATE:
@@ -193,7 +193,7 @@ func test_firepower_follows_strength() -> void:
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(4, 0))
 	u.hp = 50.0
 	sim.step()
-	check(_near(_lost(t), 10.0 * 5.0 / 9.0), "5 of 9 men fire, lost %f" % _lost(t))
+	check(_near(_lost(t), 10.0 * 5.0 / 9.0 * Simulation.DAMAGE_SCALE), "5 of 9 men fire, lost %f" % _lost(t))
 	check(_near(t.org, 100.0 - 15.0 * 5.0 / 9.0), "and suppress, org %f" % t.org)
 
 
@@ -226,4 +226,4 @@ func test_rocket_launcher_fires_volleys() -> void:
 	check_eq(shots.size(), 7, "six rockets then the next volley")
 	check_eq(shots[5] - shots[0], 5 * 10, "0.5 s apart")
 	check_eq(shots[6] - shots[5], 10 * Simulation.TICK_RATE, "10 s reload")
-	check(_near(_lost(t), 35.0 * 7), "35 each")
+	check(_near(_lost(t), 35.0 * 7 * Simulation.DAMAGE_SCALE), "35 each")

@@ -33,9 +33,9 @@ func test_idle_unit_shoots_enemy_in_range() -> void:
 	sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(5, 0))
 	sim.step()
-	check(_near(_lost(t), 10.0), "rifle hits for 10, lost %f" % _lost(t))
+	check(_near(_lost(t), 10.0 * Simulation.DAMAGE_SCALE), "rifle hits for 10, lost %f" % _lost(t))
 	_run(sim, Simulation.TICK_RATE)
-	check(_near(_lost(t), 20.0), "one more shot after the 1 s cooldown, lost %f" % _lost(t))
+	check(_near(_lost(t), 20.0 * Simulation.DAMAGE_SCALE), "one more shot after the 1 s cooldown, lost %f" % _lost(t))
 
 
 func test_out_of_range_is_ignored() -> void:
@@ -52,7 +52,7 @@ func test_range_scales_with_map() -> void:
 	sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(10, 0))
 	sim.step()
-	check(_near(_lost(t), 10.0), "hit at 10 cells")
+	check(_near(_lost(t), 10.0 * Simulation.DAMAGE_SCALE), "hit at 10 cells")
 
 
 func test_no_friendly_auto_target() -> void:
@@ -69,7 +69,7 @@ func test_tank_gun_hits_infantry_in_full() -> void:
 	sim.spawn(UnitType.tank(), P, Vector2i(0, 0))
 	var inf: SimUnit = sim.spawn(_dummy(UnitType.Kind.INFANTRY), E, Vector2i(4, 0))
 	sim.step()
-	check(_near(_lost(inf), 50.0), "tank vs infantry, lost %f" % _lost(inf))
+	check(_near(_lost(inf), 50.0 * Simulation.DAMAGE_SCALE), "tank vs infantry, lost %f" % _lost(inf))
 
 
 func test_high_ground_damage_and_range() -> void:
@@ -77,7 +77,7 @@ func test_high_ground_damage_and_range() -> void:
 	sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(6, 0))
 	sim.step()
-	check(_near(_lost(t), 11.5), "+15%% damage and reaches 6 cells, lost %f" % _lost(t))
+	check(_near(_lost(t), 11.5 * Simulation.DAMAGE_SCALE), "+15%% damage and reaches 6 cells, lost %f" % _lost(t))
 
 
 func test_low_ground_damage() -> void:
@@ -85,7 +85,7 @@ func test_low_ground_damage() -> void:
 	sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(5, 0))
 	sim.step()
-	check(_near(_lost(t), 8.5), "-15%% shooting uphill, lost %f" % _lost(t))
+	check(_near(_lost(t), 8.5 * Simulation.DAMAGE_SCALE), "-15%% shooting uphill, lost %f" % _lost(t))
 	check(_near(sim.range_cells(sim.unit(1), t), 5.0), "no range bonus uphill")
 
 
@@ -168,13 +168,13 @@ func test_area_weapon_friendly_fire_and_penalty() -> void:
 	check_eq(sim.shots.size() + _lost(t), 0.0, "mortar will not auto-fire with a friend in the blast")
 	sim.issue(SimCommand.attack(P, PackedInt32Array([m.id]), t.id))
 	sim.step()
-	check(_near(_lost(t), 40.0), "unarmoured dummy takes the full 40, lost %f" % _lost(t))
-	check(_near(_lost(f), 40.0), "friend in the blast hit too, lost %f" % _lost(f))
+	check(_near(_lost(t), 40.0 * Simulation.DAMAGE_SCALE), "unarmoured dummy takes the full 40, lost %f" % _lost(t))
+	check(_near(_lost(f), 40.0 * Simulation.DAMAGE_SCALE), "friend in the blast hit too, lost %f" % _lost(f))
 	check_eq(sim.score[P], 100, "no penalty under 100 damage")
 	_run(sim, 80)
-	check(_near(sim.friendly_damage[P], 80.0), "two shots of friendly damage")
-	_run(sim, 80)
-	check(sim.unit(f.id) == null, "friend killed by the third shot")
+	check(_near(sim.friendly_damage[P], 80.0 * Simulation.DAMAGE_SCALE), "two shots of friendly damage")
+	_run(sim, 160)
+	check(sim.unit(f.id) == null, "friend killed by the fourth shot")
 	# 100 friendly damage: −5; killing a weight-2 friend: −10.
 	check_eq(sim.ff_penalty[P], 15, "penalty")
 	check_eq(sim.score[P], 85, "score")
@@ -183,7 +183,7 @@ func test_area_weapon_friendly_fire_and_penalty() -> void:
 func test_score_never_below_zero() -> void:
 	var sim: Simulation = _sim([".........."])
 	var m: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
-	var f: SimUnit = sim.spawn(_dummy(UnitType.Kind.INFANTRY, 10.0), P, Vector2i(3, 0))
+	var f: SimUnit = sim.spawn(_dummy(UnitType.Kind.INFANTRY, 7.0), P, Vector2i(3, 0))
 	f.type.weight = 4
 	sim.issue(SimCommand.attack(P, PackedInt32Array([m.id]), f.id))
 	sim.step()

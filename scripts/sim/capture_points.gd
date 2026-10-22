@@ -15,6 +15,8 @@ var owner: Array[int] = []
 var taker: Array[int] = []
 ## Ticks the taker has held each point uncontested so far.
 var progress: Array[int] = []
+## Sides with units on each point this tick, one bit per GameMap.Side.
+var presence: Array[int] = []
 
 
 func _init(p_map: GameMap) -> void:
@@ -23,6 +25,7 @@ func _init(p_map: GameMap) -> void:
 		owner.append(CellGroup.NO_OWNER)
 		taker.append(CellGroup.NO_OWNER)
 		progress.append(0)
+		presence.append(0)
 
 
 func held_by(side: int) -> int:
@@ -34,15 +37,23 @@ func share(i: int) -> float:
 	return float(progress[i]) / CAPTURE_TICKS
 
 
-## Routing units and passengers neither take nor contest a point.
+## Whether point `i` has an enemy of `side` on it (being taken or contested).
+func under_attack(i: int, side: int) -> bool:
+	return presence[i] & (1 << (1 - side)) != 0
+
+
+## Routing units, passengers, supply trucks and buildings neither take nor
+## contest a point.
 func update(units: Array[SimUnit]) -> void:
 	var r: float = RADIUS_CELLS * Simulation.SUBCELL
 	for i: int in map.pois.size():
 		var centre: Vector2 = map.pois[i].center * Simulation.SUBCELL
 		var present: Array[bool] = [false, false]
 		for u: SimUnit in units:
-			if u.on_map() and u.is_alive() and not u.routing and Vector2(u.pos).distance_squared_to(centre) <= r * r:
+			if u.on_map() and u.is_alive() and not u.routing and not u.is_convoy() and not u.type.structure \
+					and Vector2(u.pos).distance_squared_to(centre) <= r * r:
 				present[u.side] = true
+		presence[i] = (1 if present[0] else 0) | (2 if present[1] else 0)
 		if present[0] and present[1]:
 			continue
 		var side: int = 0 if present[0] else (1 if present[1] else CellGroup.NO_OWNER)

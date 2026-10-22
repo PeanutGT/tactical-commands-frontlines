@@ -5,6 +5,11 @@ extends RefCounted
 
 ## Section 9 hold position: 4 s to dig in, 2 s to get out, no moving meanwhile.
 enum Hold { NONE, ENTERING, HELD, LEAVING }
+## Engineer work on a bridge (section 4.4): planting a charge or repairing.
+enum Work { NONE, DEMOLISH, REPAIR }
+## convoy_goal of a unit that is not a supply truck, and of one driving to its HQ.
+const NOT_CONVOY: int = -2
+const GOAL_HQ: int = -1
 
 var id: int = 0
 var type: UnitType
@@ -53,6 +58,23 @@ var board_id: int = 0
 var passengers: PackedInt32Array = PackedInt32Array()
 ## Ticks left until the passengers are off, 0 when not unloading.
 var unload_ticks: int = 0
+## 運補車隊 truck: point index (map.pois) it drives to, GOAL_HQ for its HQ,
+## NOT_CONVOY for every other unit. It takes no orders.
+var convoy_goal: int = NOT_CONVOY
+## Point it set out from.
+var convoy_from: int = -1
+## Cells driven so far; the pay-out grows with it.
+var convoy_cells: float = 0.0
+## Support effects on the unit: ticks of 主動防護系統 and 裝甲突擊 left, and
+## the 附加裝甲 shield soaking up damage first.
+var aps_ticks: int = 0
+var boost_ticks: int = 0
+var shield: float = 0.0
+var work: Work = Work.NONE
+var work_ticks: int = 0
+var work_bridge: int = -1
+## Tick the work started; a hit after it calls the work off.
+var work_since: int = 0
 
 
 func cell() -> Vector2i:
@@ -86,9 +108,13 @@ func is_held() -> bool:
 	return hold == Hold.HELD or hold == Hold.LEAVING
 
 
-## Held units and units digging in or out cannot move.
+## Held units, units digging in or out and buildings cannot move.
 func can_move() -> bool:
-	return hold == Hold.NONE
+	return hold == Hold.NONE and not type.structure
+
+
+func is_convoy() -> bool:
+	return convoy_goal != NOT_CONVOY
 
 
 ## Below half organization: fires and moves slower.

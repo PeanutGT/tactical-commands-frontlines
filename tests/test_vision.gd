@@ -40,7 +40,7 @@ func test_three_fog_states() -> void:
 	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.EXPLORED, "13 cells away beyond 10.5-cell sight")
 	check_eq(sim.vision.fog_at(E, Vector2i(1, 2)), Vision.Fog.EXPLORED, "the other side does not see it")
 	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(13, 2)))
-	_run(sim, Simulation.TICK_RATE * 12)
+	_run(sim, Simulation.TICK_RATE * 20)
 	check_eq(u.cell(), Vector2i(13, 2), "walked across")
 	check_eq(sim.vision.fog_at(P, Vector2i(1, 2)), Vision.Fog.EXPLORED, "left behind: explored")
 	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.VISIBLE, "now in sight")
@@ -178,3 +178,15 @@ func test_hq_watches_around_it() -> void:
 	check(not _seen(sim, P, far), "13 cells: beyond HQ sight")
 	check(not _seen(sim, P, wood), "units in forest stay hidden")
 	check(not sim.vision.cell_visible(E, Vector2i(4, 2)), "the enemy gets nothing from our HQ")
+
+
+func test_forced_long_gun_closes_in_until_it_sees() -> void:
+	var rows: Array[String] = ["..............................", ".............................."]
+	var sim: Simulation = _sim(rows)
+	var mortar: SimUnit = sim.spawn(UnitType.mortar(), P, Vector2i(1, 0))
+	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(13, 0))
+	sim.step()
+	check(not sim.vision.sees(P, t), "12 cells: in the mortar's range, beyond its 9-cell sight")
+	sim.issue(SimCommand.attack(P, PackedInt32Array([mortar.id]), t.id))
+	_run(sim, Simulation.TICK_RATE * 6)
+	check(t.hp < t.type.max_hp, "drove closer until it saw the target, then fired")

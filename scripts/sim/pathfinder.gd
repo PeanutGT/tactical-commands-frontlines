@@ -119,6 +119,29 @@ func prepare() -> void:
 	_ensure_tables(1)
 
 
+## Re-reads the ground around `cells` after it changed (a bridge fell or was
+## rebuilt).
+func refresh(cells: Array[Vector2i]) -> void:
+	for cls: int in 2:
+		if _step_mask[cls].is_empty():
+			continue
+		# Packed arrays are values: change a local copy and put it back.
+		var mask: PackedByteArray = _step_mask[cls]
+		var inv: PackedFloat64Array = _inv_speed[cls]
+		_step_mask[cls] = PackedByteArray()
+		_inv_speed[cls] = PackedFloat64Array()
+		for c: Vector2i in cells:
+			for y: int in range(-1, 2):
+				for x: int in range(-1, 2):
+					var n: Vector2i = c + Vector2i(x, y)
+					if _map.in_bounds(n):
+						var i: int = _map.index_of(n)
+						inv[i] = _inv_of(n, cls == 1)
+						mask[i] = _mask_of(n, cls == 1)
+		_step_mask[cls] = mask
+		_inv_speed[cls] = inv
+
+
 func _ensure_tables(cls: int) -> void:
 	if not _step_mask[cls].is_empty():
 		return
@@ -130,15 +153,24 @@ func _ensure_tables(cls: int) -> void:
 	inv.resize(n)
 	for i: int in n:
 		var cell: Vector2i = Vector2i(i % _map.width, i / _map.width)
-		var speed: float = Movement.terrain_speed(_map, cell, vehicle)
-		inv[i] = 1.0 / speed if speed > 0.0 else INF
-		var bits: int = 0
-		for k: int in DIRS.size():
-			if Movement.can_step(_map, cell, cell + DIRS[k], vehicle):
-				bits |= 1 << k
-		mask[i] = bits
+		inv[i] = _inv_of(cell, vehicle)
+		mask[i] = _mask_of(cell, vehicle)
 	_step_mask[cls] = mask
 	_inv_speed[cls] = inv
+
+
+func _inv_of(cell: Vector2i, vehicle: bool) -> float:
+	var speed: float = Movement.terrain_speed(_map, cell, vehicle)
+	return 1.0 / speed if speed > 0.0 else INF
+
+
+## A bit per DIRS entry saying whether that step is allowed.
+func _mask_of(cell: Vector2i, vehicle: bool) -> int:
+	var bits: int = 0
+	for k: int in DIRS.size():
+		if Movement.can_step(_map, cell, cell + DIRS[k], vehicle):
+			bits |= 1 << k
+	return bits
 
 
 static func _heuristic(a: Vector2i, b: Vector2i) -> float:

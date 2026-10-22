@@ -98,23 +98,23 @@ func test_setup_shuffles_and_deals_the_hand() -> void:
 
 func test_supply_rate_follows_weight_and_points() -> void:
 	var sim: Simulation = _sim()
-	check(_near(sim.supply_rate(P), 0.5), "empty field: 0.5/s")
+	check(_near(sim.supply_rate(P), 0.15), "empty field: 0.15/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 5))  # 3 x weight 5 = 15
-	check(_near(sim.supply_rate(P), 0.375), "15/30: 0.375/s")
+	check(_near(sim.supply_rate(P), 0.09), "3 tanks, 24/30: 0.09/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 6))
-	check(_near(sim.supply_rate(P), 0.25), "30/30: 0.25/s")
+	check(_near(sim.supply_rate(P), 0.075), "over the cap: half, 0.075/s")
 	sim.poi_owner[0] = P
-	check(_near(sim.supply_rate(P), 0.4), "one point held: +0.15/s")
-	check(_near(sim.supply_rate(E), 0.5), "the other side is unaffected")
+	check(_near(sim.supply_rate(P), 0.105), "one point held: +0.03/s")
+	check(_near(sim.supply_rate(E), 0.15), "the other side is unaffected")
 
 
 func test_supply_grows_and_caps() -> void:
 	var sim: Simulation = _sim()
 	_run(sim, Simulation.TICK_RATE * 4)
-	check(_near(sim.sides[P].supply, 7.0), "5 + 4 s x 0.5")
-	_run(sim, Simulation.TICK_RATE * 20)
+	check(_near(sim.sides[P].supply, 5.6), "5 + 4 s x 0.15")
+	_run(sim, Simulation.TICK_RATE * 40)
 	check_eq(sim.sides[P].supply, 10.0, "stops at the map's cap")
 
 
@@ -130,10 +130,10 @@ func test_deploy_in_spawn_zone_draws_from_the_deck() -> void:
 	check_eq(u.type.id, &"infantry", "right unit")
 	check_eq(u.card, &"infantry", "remembers its card")
 	check_eq(u.cell(), Vector2i(1, 1), "where it was dropped")
-	check(_near(s.supply, 5.0 - 2.0 + 0.5 * Simulation.TICK_SEC), "cost paid after this tick's supply")
+	check(_near(s.supply, 5.0 - 2.0 + Simulation.SUPPLY_BASE * Simulation.TICK_SEC), "cost paid after this tick's supply")
 	check_eq(s.hand, [&"javelin", &"apc", &"tank", &"scout_car"] as Array[StringName], "slot refilled from the top")
 	check_eq(s.deck, [&"mortar"] as Array[StringName], "deck shrinks")
-	check_eq(sim.field_weight(P), 2, "weight counts it")
+	check_eq(sim.field_weight(P), 3, "weight counts it (2 x 1.5)")
 
 
 func test_deploy_is_refused_where_and_when_it_should_be() -> void:
@@ -143,15 +143,15 @@ func test_deploy_is_refused_where_and_when_it_should_be() -> void:
 	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(21, 7)), Simulation.Deploy.BAD_PLACE, "enemy spawn")
 	check_eq(sim.can_deploy(P, 0, &"tank", Vector2i(1, 1)), Simulation.Deploy.NOT_IN_HAND, "slot holds another card")
 	check_eq(sim.can_deploy(P, 9, &"infantry", Vector2i(1, 1)), Simulation.Deploy.NOT_IN_HAND, "no such slot")
-	check_eq(sim.can_deploy(P, 3, &"supply_convoy", Vector2i(10, 1)), Simulation.Deploy.OK, "support cards go anywhere")
+	check_eq(sim.can_deploy(P, 3, &"supply_convoy", Vector2i(10, 1)), Simulation.Deploy.BAD_PLACE, "a convoy starts at a held point")
 	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(10, 1)))
 	sim.step()
 	check_eq(sim.last_deploy[P], Simulation.Deploy.BAD_PLACE, "sim re-checks the command")
 	check(sim.units.is_empty(), "nothing spawned")
-	sim.map.config.weight_cap = 7
+	sim.map.config.weight_cap = 11
 	sim.spawn(UnitType.tank(), P, Vector2i(10, 5))
-	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(1, 1)), Simulation.Deploy.OK, "5 + 2 fits 7")
-	check_eq(sim.can_deploy(P, 1, &"apc", Vector2i(1, 1)), Simulation.Deploy.OVER_WEIGHT, "5 + 3 is over 7")
+	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(1, 1)), Simulation.Deploy.OK, "8 + 3 fits 11")
+	check_eq(sim.can_deploy(P, 1, &"apc", Vector2i(1, 1)), Simulation.Deploy.OVER_WEIGHT, "8 + 5 is over 11")
 
 
 func test_deploy_near_a_held_point() -> void:
@@ -166,50 +166,40 @@ func test_deploy_near_a_held_point() -> void:
 	check_eq(sim.can_deploy(P, 0, &"infantry", near), Simulation.Deploy.BAD_PLACE, "held by the enemy")
 
 
-func test_dead_unit_card_cools_down_then_returns_to_the_bottom() -> void:
+func test_played_card_cools_down_while_its_unit_lives() -> void:
+	var sim: Simulation = _sim()
+	var s: SideState = _deal(sim, [&"infantry", &"apc", &"tank", &"scout_car"], [&"mortar"])
+	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(1, 1)))
+	sim.step()
+	check_eq(s.cooldowns.size(), 1, "card cooling from the moment it was played")
+	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) - 1)
+	check(not s.deck.has(&"infantry"), "not back yet after 6 s minus a tick")
+	sim.step()
+	check_eq(s.deck.back(), &"infantry", "back at the bottom")
+	check_eq(sim.units.size(), 1, "while the first squad is still on the field")
+
+
+func test_dying_costs_no_extra_cooldown() -> void:
 	var sim: Simulation = _sim()
 	var s: SideState = _deal(sim, [&"apc", &"tank", &"scout_car", &"javelin"], [&"mortar"])
 	var u: SimUnit = _card_unit(sim, &"infantry", P, Vector2i(10, 4))
 	u.hp = 0.0
 	sim.step()
 	check(sim.unit(u.id) == null, "dead")
-	check_eq(s.cooldowns.size(), 1, "card cooling")
-	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) - 1)
-	check_eq(s.deck, [&"mortar"] as Array[StringName], "not back yet after 6 s minus a tick")
-	sim.step()
-	check_eq(s.deck, [&"mortar", &"infantry"] as Array[StringName], "back at the bottom")
-	check(s.cooldowns.is_empty(), "cooldown done")
+	check(s.cooldowns.is_empty(), "nothing new cooling")
 
 
-func test_empty_deck_leaves_the_slot_empty_until_a_card_returns() -> void:
+func test_same_card_twice_on_the_field() -> void:
 	var sim: Simulation = _sim()
 	var s: SideState = _deal(sim, [&"infantry", &"apc", &"tank", &"scout_car"], [])
 	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(1, 1)))
 	sim.step()
 	check_eq(s.hand[0], SideState.EMPTY, "nothing to draw")
-	var u: SimUnit = sim.units[0]
-	u.hp = 0.0
-	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) + 1)
+	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE))
 	check_eq(s.hand[0], &"infantry", "the returning card fills the empty slot")
-	check(s.deck.is_empty(), "and does not wait in the deck")
-
-
-func test_supply_convoy_pays_out_and_returns() -> void:
-	var sim: Simulation = _sim()
-	sim.map.config.supply_cap = 20
-	var s: SideState = _deal(sim, [&"supply_convoy", &"apc", &"tank", &"scout_car"], [&"javelin"], 5.0)
-	sim.issue(SimCommand.deploy(P, 0, &"supply_convoy", Vector2i(10, 1)))
+	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(2, 2)))
 	sim.step()
-	check(_near(s.supply, 4.0 + 0.5 * Simulation.TICK_SEC), "cost 1 paid")
-	check_eq(s.effects.size(), 1, "effect running")
-	check_eq(sim.field_weight(P), 0, "no unit")
-	var delay: int = roundi(Card.CONVOY_DELAY_SEC * Simulation.TICK_RATE)
-	_run(sim, delay - 1)
-	check(s.supply < 6.0, "not paid yet")
-	sim.step()
-	check(_near(s.supply, 4.0 + 4.0 + 0.5 * Simulation.TICK_SEC * (delay + 1)), "4 supply after 3 s")
-	check_eq(s.deck.back(), &"supply_convoy", "card back at the bottom, no cooldown")
-	check(s.cooldowns.is_empty(), "nothing cooling")
+	check_eq(sim.units.size(), 2, "two squads from one card")
 
 
 func test_retreat_drives_home_and_refunds_half() -> void:
@@ -233,7 +223,7 @@ func test_retreat_drives_home_and_refunds_half() -> void:
 	check(u.cell().x <= 3, "inside the spawn zone, not where the later move pointed")
 	check_eq(sim.retreated.size(), 1, "reported as retreated, not dead")
 	check(sim.deaths.is_empty(), "no wreck")
-	check_eq(s.deck.back(), &"infantry", "card straight to the bottom")
+	check(not s.deck.has(&"infantry"), "the card was already cycling: nothing comes back")
 	check(s.cooldowns.is_empty(), "no cooldown")
 
 
@@ -277,7 +267,7 @@ func test_infantry_boards_up_to_capacity() -> void:
 	check(not t.a.on_map() and not t.b.on_map(), "riders are off the map")
 	check(t.c.on_map() and t.c.board_id == 0, "third squad turned away: APC carries weight 4")
 	check_eq(sim.free_capacity(apc), 0, "full")
-	check_eq(sim.field_weight(P), 3 + 2 + 2 + 2, "riders still count as weight")
+	check_eq(sim.field_weight(P), 5 + 3 + 3 + 3, "riders still count as weight")
 	sim.issue(SimCommand.move(P, PackedInt32Array([apc.id, t.a.id]), Vector2i(16, 5)))
 	_run(sim, Simulation.TICK_RATE * 3)
 	check(apc.cell().x > 12, "APC drove off")
@@ -332,7 +322,7 @@ func test_wrecked_transport_throws_out_hurt_passengers() -> void:
 	for r: SimUnit in [t.a, t.b]:
 		check(r.on_map(), "rider %d out" % r.id)
 		check(_near(r.hp, r.type.max_hp * 0.5), "rider %d lost half its health" % r.id)
-	check_eq(sim.sides[P].cooldowns.size(), 1, "only the APC card cools down")
+	check(sim.sides[P].cooldowns.is_empty(), "dying adds no cooldown")
 
 
 func test_retreating_transport_takes_its_riders_home() -> void:
@@ -349,7 +339,7 @@ func test_retreating_transport_takes_its_riders_home() -> void:
 		if sim.unit(apc.id) == null:
 			break
 	check(sim.unit(apc.id) == null and sim.unit(t.a.id) == null and sim.unit(t.b.id) == null, "all three left")
-	check_eq(s.deck, [&"apc", &"infantry", &"infantry"] as Array[StringName], "their cards return")
+	check(s.deck.is_empty(), "their cards were already cycling")
 	check(s.supply >= 1.5 + 1.0 + 1.0, "half refunds for all three")
 
 

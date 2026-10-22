@@ -16,6 +16,8 @@ var start_supply: int = 0
 var supply_cap: int = 0
 var victory_points: int = 0
 var time_limit_sec: int = 0
+## Points each side holds from the start: the ones nearest its spawn zone.
+var start_points: int = 0
 
 
 static func from_dict(d: Dictionary) -> MapConfig:
@@ -36,4 +38,5 @@ static func from_dict(d: Dictionary) -> MapConfig:
 	c.supply_cap = int(d.get("supplyCap", 0))
 	c.victory_points = int(d.get("victoryPoints", 0))
 	c.time_limit_sec = int(d.get("timeLimitSec", 0))
+	c.start_points = int(d.get("startPoints", 0))
 	return c

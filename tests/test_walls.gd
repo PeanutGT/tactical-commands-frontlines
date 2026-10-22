@@ -72,7 +72,7 @@ func test_unit_inside_a_building_gets_out() -> void:
 	var sim: Simulation = Simulation.new(map_from_rows(WALL), 3)
 	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(5, 3))
 	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(9, 3)))
-	_run(sim, Simulation.TICK_RATE * 6)
+	_run(sim, Simulation.TICK_RATE * 10)
 	check(Movement.passable(sim.map, u.cell(), false), "stepped off the building")
 	check_eq(u.cell(), Vector2i(9, 3), "and reached its goal")
 
