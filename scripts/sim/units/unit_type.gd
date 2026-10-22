@@ -104,6 +104,8 @@ const CARDS: Array = [
 ]
 
 
+## Artillery that fires over buildings; everything else needs a clear line.
+const INDIRECT_FIRE: Array[StringName] = [&"spg", &"mrl", &"mortar"]
 ## Section 9: infantry weight each transport carries.
 const TRANSPORT_CAPACITY: Dictionary[StringName, int] = {&"apc": 4, &"ifv": 2, &"transport_heli": 3}
 
@@ -141,6 +143,7 @@ static func _from_row(row: Array) -> UnitType:
 		t.weapon.targets = w[5]
 		t.weapon.splash_m = MapScale.standard_cells_to_meters(w[6])
 		t.weapon.burst = w[7]
+		t.weapon.indirect = INDIRECT_FIRE.has(t.id)
 	return t
 
 
