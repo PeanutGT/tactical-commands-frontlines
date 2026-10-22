@@ -1,6 +1,7 @@
 extends Node2D
-## Map view: loads a map, runs the simulation at a fixed tick rate, builds the
-## render layers and wires input and the HUD.
+## Map view: loads a map, lets the player build a deck, then runs the
+## simulation at a fixed tick rate, builds the render layers and wires input,
+## the hand and the HUD.
 
 signal map_loaded(map: GameMap)
 signal cursor_cell_changed(cell: Vector2i)
@@ -10,16 +11,26 @@ signal cursor_cell_changed(cell: Vector2i)
 
 ## Most ticks run in one frame, so a long hitch does not spiral.
 const MAX_TICKS_PER_FRAME: int = 5
+const DEPLOY_REFUSED: Dictionary[Simulation.Deploy, String] = {
+	Simulation.Deploy.NOT_IN_HAND: "這張卡已不在手上",
+	Simulation.Deploy.NO_SUPPLY: "補給不足",
+	Simulation.Deploy.OVER_WEIGHT: "超過權重上限",
+	Simulation.Deploy.BAD_PLACE: "只能出在己方出兵區或己方據點附近",
+}
 
 @onready var _terrain: TerrainLayer = $TerrainLayer
 @onready var _markers: MapMarkers = $Markers
 @onready var _grid: GridOverlay = $Grid
 @onready var _units: UnitLayer = $Units
+@onready var _deploy: DeployOverlay = $Deploy
 @onready var _selection: SelectionController = $Selection
 @onready var _camera: CameraController = $Camera
 @onready var _hud: Hud = $Hud
+@onready var _hand: HandBar = $Hud/Hand
+@onready var _deck_builder: DeckBuilder = $Hud/DeckBuilder
 
 var map: GameMap
+## Null until the player has picked a deck.
 var sim: Simulation
 var style: StylePack = StylePack.dev()
 var _cursor: Vector2i = Vector2i(-1, -1)
@@ -43,30 +54,45 @@ func _ready() -> void:
 	_markers.setup(map, style)
 	_grid.setup(map, style)
 	_grid.visible = false
-	sim = Simulation.new(map, sim_seed)
-	_spawn_placeholders()
-	_units.setup(sim, style)
-	_selection.setup(sim, _units, style)
 	map_loaded.emit(map)
 	_camera.setup(Vector2(map.width, map.height) * style.cell_px)
+	_deck_builder.deck_confirmed.connect(start_match)
+	_deck_builder.setup(map.config.deck_size, DeckStore.load_deck(map.config.deck_size))
+
+
+## Starts the match with the player's `deck`. The enemy gets the starter
+## deck; it does not play cards until the AI (M6).
+func start_match(deck: Array[StringName]) -> void:
+	DeckStore.save_deck(deck)
+	sim = Simulation.new(map, sim_seed)
+	sim.setup_side(GameMap.Side.PLAYER, deck)
+	sim.setup_side(GameMap.Side.ENEMY, DeckStore.starter(map.config.deck_size))
+	_spawn_placeholders()
+	_units.setup(sim, style)
+	_deploy.setup(sim, style)
+	_selection.setup(sim, _units, style)
+	_hand.setup(sim)
+	_hand.drag_changed.connect(_deploy.set_card)
+	_hand.card_dropped.connect(_on_card_dropped)
 
 
 func _process(delta: float) -> void:
 	if map == null:
 		return
-	_tick_time += delta
-	var ticks: int = 0
-	while _tick_time >= Simulation.TICK_SEC and ticks < MAX_TICKS_PER_FRAME:
-		sim.step()
-		_units.capture_tick()
-		_tick_time -= Simulation.TICK_SEC
-		ticks += 1
-	if ticks > 0:
-		_selection.prune_dead()
-		_hud.set_score(sim.score[GameMap.Side.PLAYER], sim.ff_penalty[GameMap.Side.PLAYER])
-	if ticks == MAX_TICKS_PER_FRAME:
-		_tick_time = minf(_tick_time, Simulation.TICK_SEC)
-	_units.alpha = _tick_time / Simulation.TICK_SEC
+	if sim != null:
+		_tick_time += delta
+		var ticks: int = 0
+		while _tick_time >= Simulation.TICK_SEC and ticks < MAX_TICKS_PER_FRAME:
+			sim.step()
+			_units.capture_tick()
+			_tick_time -= Simulation.TICK_SEC
+			ticks += 1
+		if ticks > 0:
+			_selection.prune_dead()
+			_hud.set_score(sim.score[GameMap.Side.PLAYER], sim.ff_penalty[GameMap.Side.PLAYER])
+		if ticks == MAX_TICKS_PER_FRAME:
+			_tick_time = minf(_tick_time, Simulation.TICK_SEC)
+		_units.alpha = _tick_time / Simulation.TICK_SEC
 
 	var cell: Vector2i = Vector2i((get_global_mouse_position() / float(style.cell_px)).floor())
 	if not map.in_bounds(cell):
@@ -87,19 +113,24 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_camera.fit()
 
 
-## M3 test units: a mixed group at our spawn, enemies at theirs, a held
-## enemy outpost at the objective nearest to us and an enemy tank and mortar
-## at the next one.
+## A card from the hand let go over the map: play it there, or say why not.
+func _on_card_dropped(slot: int, card: StringName, screen_pos: Vector2) -> void:
+	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_pos
+	var cell: Vector2i = Vector2i((world / float(style.cell_px)).floor())
+	var r: Simulation.Deploy = sim.can_deploy(GameMap.Side.PLAYER, slot, card, cell)
+	if r == Simulation.Deploy.OK:
+		sim.issue(SimCommand.deploy(GameMap.Side.PLAYER, slot, card, cell))
+	else:
+		_hand.flash(DEPLOY_REFUSED[r])
+
+
+## Test enemies until the AI (M6): a group at their spawn, a held outpost at
+## the objective nearest to us and a tank and mortar at the next one.
 func _spawn_placeholders() -> void:
-	var ours: Array[UnitType] = [
-		UnitType.infantry(), UnitType.infantry(), UnitType.infantry(), UnitType.of(&"javelin"),
-		UnitType.scout_car(), UnitType.tank(), UnitType.tank(), UnitType.mortar(),
-	]
 	var theirs: Array[UnitType] = [UnitType.infantry(), UnitType.of(&"bazooka"), UnitType.tank()]
 	if map.player_spawn == null or map.enemy_spawn == null:
 		return
 	var home: Vector2 = map.player_spawn.center
-	_spawn_group(ours, GameMap.Side.PLAYER, Vector2i(home.round()))
 	_spawn_group(theirs, GameMap.Side.ENEMY, Vector2i(map.enemy_spawn.center.round()))
 	var pois: Array[CellGroup] = map.pois.duplicate()
 	pois.sort_custom(func(a: CellGroup, b: CellGroup) -> bool:

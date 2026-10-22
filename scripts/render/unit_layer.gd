@@ -28,6 +28,9 @@ const ORG_GOOD: Color = Color("5ab4f0")
 const ORG_SUPPRESSED: Color = Color("f08c3c")
 const ORG_ROUTING: Color = Color("e04848")
 const BLAST_COLOR: Color = Color("ffb04a")
+## Retreating formations are drawn see-through.
+const RETREAT_ALPHA: float = 0.5
+const PASSENGER_PIP: float = 0.18  # cells
 
 var sim: Simulation
 ## Fraction of the way from the last tick to the next one, 0..1.
@@ -70,6 +73,14 @@ func capture_tick() -> void:
 		_wrecks.append([Vector2(u.pos) * k, WRECK_SEC])
 		_heading.erase(u.id)
 		selected.erase(u.id)
+	for u: SimUnit in sim.retreated:
+		_heading.erase(u.id)
+		selected.erase(u.id)
+	# Passengers are not on the map, so they cannot stay selected.
+	for id: int in selected.keys():
+		var p: SimUnit = sim.unit(id)
+		if p != null and not p.on_map():
+			selected.erase(id)
 
 
 func _process(delta: float) -> void:
@@ -102,8 +113,12 @@ func _draw() -> void:
 			tc.a = 0.6
 			draw_line(world_pos(u), world_pos(t), tc, 1.0)
 	for u: SimUnit in sim.units:
+		if not u.on_map():
+			continue
 		var p: Vector2 = world_pos(u)
 		var fill: Color = _style.unit_colors[u.side]
+		if u.retreating:
+			fill.a = RETREAT_ALPHA
 		if u.type.vehicle:
 			var moved: Vector2 = Vector2(u.pos - u.prev_pos)
 			if moved != Vector2.ZERO:
@@ -118,6 +133,8 @@ func _draw() -> void:
 			_draw_soldiers(u.figures(), p, fill, s)
 		if u.hold != SimUnit.Hold.NONE:
 			_draw_hold(u, p, s)
+		if not u.passengers.is_empty():
+			_draw_passengers(u, p, s)
 		if selected.has(u.id):
 			draw_arc(p, pick_radius(u) + 3.0, 0.0, TAU, 24, _style.selection, 1.5, true)
 		if selected.has(u.id) or u.hp < u.type.max_hp or u.org < u.type.max_org:
@@ -134,6 +151,20 @@ func _draw() -> void:
 			var lc: Color = _style.unit_colors[e[4]].lightened(0.6)
 			lc.a = e[3] / TRACER_SEC
 			draw_line(e[0], e[1], lc, 1.5)
+
+
+## One small square per passenger squad beside the transport, and a ring
+## that fills up while they get out.
+func _draw_passengers(u: SimUnit, p: Vector2, s: float) -> void:
+	var pip: float = PASSENGER_PIP * s
+	var start: Vector2 = p + Vector2(-0.5 * s, 0.55 * s)
+	for i: int in u.passengers.size():
+		var r: Rect2 = Rect2(start + Vector2(i * pip * 1.4, 0.0), Vector2(pip, pip))
+		draw_rect(r, _style.selection)
+		draw_rect(r, _style.unit_outline, false, 1.0)
+	if u.unload_ticks > 0:
+		var done: float = 1.0 - float(u.unload_ticks) / Simulation.UNLOAD_TICKS
+		draw_arc(p, 0.7 * s, -PI * 0.5, -PI * 0.5 + TAU * done, 24, _style.selection, 2.0, true)
 
 
 ## Corner brackets around a unit holding position; faint while digging in or out.

@@ -2,7 +2,9 @@ class_name SelectionController
 extends Node2D
 ## PC unit control (section 3): left-click selects, left-drag box-selects,
 ## Shift adds, right-click moves (or attacks the enemy under the cursor),
-## Ctrl+right-click force-attacks any unit, H toggles hold position, X stops. Orders go to the simulation as
+## Ctrl+right-click force-attacks any unit, right-click on an own transport
+## boards the selected infantry, H toggles hold position, X stops, R retreats,
+## U unloads. Orders go to the simulation as
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
@@ -64,8 +66,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 			var world: Vector2 = _to_world(mb.position)
 			var t: SimUnit = _unit_at(world, -1 if mb.ctrl_pressed else 1 - side)
+			var ride: SimUnit = null if mb.ctrl_pressed else _unit_at(world, side)
 			if t != null:
 				_order_attack(t)
+			elif ride != null and ride.type.transport_capacity > 0:
+				_order_board(ride)
 			else:
 				_order_move(world)
 			get_viewport().set_input_as_handled()
@@ -89,6 +94,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_H:
 				if not ids.is_empty():
 					_sim.issue(SimCommand.hold(side, ids))
+				get_viewport().set_input_as_handled()
+			KEY_R:
+				if not ids.is_empty():
+					_sim.issue(SimCommand.retreat(side, ids))
+				get_viewport().set_input_as_handled()
+			KEY_U:
+				if not ids.is_empty():
+					_sim.issue(SimCommand.unload(side, ids))
 				get_viewport().set_input_as_handled()
 
 
@@ -131,7 +144,7 @@ func _unit_at(world: Vector2, of_side: int) -> SimUnit:
 	var best: SimUnit = null
 	var best_d: float = INF
 	for u: SimUnit in _sim.units:
-		if of_side >= 0 and u.side != of_side:
+		if not u.on_map() or (of_side >= 0 and u.side != of_side):
 			continue
 		var d: float = _layer.world_pos(u).distance_to(world)
 		if d <= _layer.pick_radius(u) and d < best_d:
@@ -156,7 +169,7 @@ func _select_box(rect: Rect2, add: bool) -> void:
 	if not add:
 		_layer.selected.clear()
 	for u: SimUnit in _sim.units:
-		if u.side == side and rect.has_point(_layer.world_pos(u)):
+		if u.side == side and u.on_map() and rect.has_point(_layer.world_pos(u)):
 			_layer.selected[u.id] = true
 	selection_changed.emit(_layer.selected.size())
 
@@ -166,6 +179,27 @@ func _order_attack(t: SimUnit) -> void:
 	if ids.is_empty():
 		return
 	_sim.issue(SimCommand.attack(side, ids, t.id))
+	_marker_pos = _layer.world_pos(t)
+	_marker_left = MARKER_SEC
+	queue_redraw()
+
+
+## Selected infantry boards `t`; anything else selected moves next to it.
+func _order_board(t: SimUnit) -> void:
+	var riders: PackedInt32Array = PackedInt32Array()
+	var others: PackedInt32Array = PackedInt32Array()
+	for id: int in selected_ids():
+		if id == t.id:
+			continue
+		var u: SimUnit = _sim.unit(id)
+		if u != null and u.type.kind == UnitType.Kind.INFANTRY:
+			riders.append(id)
+		else:
+			others.append(id)
+	if not riders.is_empty():
+		_sim.issue(SimCommand.board(side, riders, t.id))
+	if not others.is_empty():
+		_sim.issue(SimCommand.move(side, others, t.cell()))
 	_marker_pos = _layer.world_pos(t)
 	_marker_left = MARKER_SEC
 	queue_redraw()
