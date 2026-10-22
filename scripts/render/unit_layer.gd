@@ -6,12 +6,16 @@ extends Node2D
 ## ticks, plus health and organization bars, hold-position brackets, tracers,
 ## blasts and wrecks.
 
-const INFANTRY_RADIUS: float = 0.44  # cells, footprint
-const VEHICLE_SIZE: Vector2 = Vector2(1.3, 0.82)  # cells, footprint length × width
-const SOLDIER_RADIUS: float = 0.1  # cells
-const SOLDIER_SPACING: float = 0.24  # cells
-const FIGURE_VEHICLE: Vector2 = Vector2(0.38, 0.23)  # cells, length × width
-const FIGURE_VEHICLE_SPACING: Vector2 = Vector2(0.33, 0.46)  # cells, across × along
+const INFANTRY_RADIUS: float = 0.4  # cells, footprint
+const SOLDIER_RADIUS: float = 0.085  # cells
+const SOLDIER_SPACING: float = 0.21  # cells
+## One heavy vehicle (armour HEAVY_ARMOR and up); lighter ones are drawn at
+## LIGHT_VEHICLE_SCALE. A vehicle is several soldiers long.
+const FIGURE_VEHICLE: Vector2 = Vector2(0.56, 0.32)  # cells, length × width
+const FIGURE_VEHICLE_GAP: Vector2 = Vector2(0.1, 0.12)  # cells, across × along
+const HEAVY_ARMOR: int = 10
+const LIGHT_VEHICLE_SCALE: float = 0.78
+const FOOTPRINT_MARGIN: float = 0.14  # cells
 const FOOTPRINT_ALPHA: float = 0.28
 const TRACER_SEC: float = 0.12
 const BLAST_SEC: float = 0.4
@@ -52,7 +56,7 @@ func world_pos(u: SimUnit) -> Vector2:
 
 ## Rough radius in world pixels, used for clicking on a unit.
 func pick_radius(u: SimUnit) -> float:
-	var cells: float = VEHICLE_SIZE.x * 0.5 if u.type.vehicle else INFANTRY_RADIUS
+	var cells: float = vehicle_footprint(u.type).x * 0.5 if u.type.vehicle else INFANTRY_RADIUS
 	return maxf(cells, 0.4) * float(_style.cell_px)
 
 
@@ -105,9 +109,9 @@ func _draw() -> void:
 			if moved != Vector2.ZERO:
 				_heading[u.id] = moved.angle()
 			draw_set_transform(p, _heading.get(u.id, 0.0))
-			var size: Vector2 = VEHICLE_SIZE * s
+			var size: Vector2 = vehicle_footprint(u.type) * s
 			draw_rect(Rect2(-size * 0.5, size), Color(fill, FOOTPRINT_ALPHA))
-			_draw_vehicles(u.figures(), fill, s)
+			_draw_vehicles(u.type, u.figures(), fill, s)
 			draw_set_transform(Vector2.ZERO)
 		else:
 			draw_circle(p, INFANTRY_RADIUS * s, Color(fill, FOOTPRINT_ALPHA))
@@ -152,15 +156,41 @@ func _draw_soldiers(n: int, p: Vector2, fill: Color, s: float) -> void:
 
 ## Vehicles in columns of two along the driving direction (drawn in the
 ## unit's rotated frame).
-func _draw_vehicles(n: int, fill: Color, s: float) -> void:
-	var size: Vector2 = FIGURE_VEHICLE * s
-	for off: Vector2 in figure_offsets(n, 2, FIGURE_VEHICLE_SPACING):
+func _draw_vehicles(t: UnitType, n: int, fill: Color, s: float) -> void:
+	var fig: Vector2 = vehicle_figure(t)
+	var size: Vector2 = fig * s
+	for off: Vector2 in figure_offsets(n, _vehicles_per_row(t), _vehicle_spacing(fig)):
 		# Rows run across the footprint, so swap axes: columns go nose to tail.
 		var c: Vector2 = Vector2(-off.y, off.x) * s
 		var body: Rect2 = Rect2(c - size * 0.5, size)
 		draw_rect(body, fill)
 		draw_rect(body, _style.unit_outline, false, -1.0)
 		draw_line(c + Vector2(size.x * 0.1, 0.0), c + Vector2(size.x * 0.5, 0.0), _style.unit_outline, -1.0)
+
+
+## Size in cells of one of `t`'s vehicles, length × width.
+static func vehicle_figure(t: UnitType) -> Vector2:
+	return FIGURE_VEHICLE if t.armor >= HEAVY_ARMOR else FIGURE_VEHICLE * LIGHT_VEHICLE_SCALE
+
+
+## Faint box under a vehicle formation, sized for its full strength.
+static func vehicle_footprint(t: UnitType) -> Vector2:
+	var fig: Vector2 = vehicle_figure(t)
+	var gap: Vector2 = _vehicle_spacing(fig)
+	var per_row: int = _vehicles_per_row(t)
+	var rows: int = ceili(float(t.figures) / per_row)
+	var across: int = mini(per_row, t.figures)
+	return Vector2((rows - 1) * gap.y + fig.x, (across - 1) * gap.x + fig.y) + Vector2.ONE * FOOTPRINT_MARGIN
+
+
+## Platoons drive two abreast, bigger formations three.
+static func _vehicles_per_row(t: UnitType) -> int:
+	return 2 if t.figures <= 4 else 3
+
+
+## Centre-to-centre spacing, across × along.
+static func _vehicle_spacing(fig: Vector2) -> Vector2:
+	return Vector2(fig.y + FIGURE_VEHICLE_GAP.x, fig.x + FIGURE_VEHICLE_GAP.y)
 
 
 ## Offsets in cells for `n` figures laid out in rows of up to `per_row`,
