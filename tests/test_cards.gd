@@ -98,22 +98,22 @@ func test_setup_shuffles_and_deals_the_hand() -> void:
 
 func test_supply_rate_follows_weight_and_points() -> void:
 	var sim: Simulation = _sim()
-	check(_near(sim.supply_rate(P), 0.2), "empty field: 0.2/s")
+	check(_near(sim.supply_rate(P), 0.15), "empty field: 0.15/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 5))  # 3 x weight 5 = 15
-	check(_near(sim.supply_rate(P), 0.15), "15/30: 0.15/s")
+	check(_near(sim.supply_rate(P), 0.09), "3 tanks, 24/30: 0.09/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 6))
-	check(_near(sim.supply_rate(P), 0.1), "30/30: 0.1/s")
+	check(_near(sim.supply_rate(P), 0.075), "over the cap: half, 0.075/s")
 	sim.poi_owner[0] = P
-	check(_near(sim.supply_rate(P), 0.15), "one point held: +0.05/s")
-	check(_near(sim.supply_rate(E), 0.2), "the other side is unaffected")
+	check(_near(sim.supply_rate(P), 0.105), "one point held: +0.03/s")
+	check(_near(sim.supply_rate(E), 0.15), "the other side is unaffected")
 
 
 func test_supply_grows_and_caps() -> void:
 	var sim: Simulation = _sim()
 	_run(sim, Simulation.TICK_RATE * 4)
-	check(_near(sim.sides[P].supply, 5.8), "5 + 4 s x 0.2")
+	check(_near(sim.sides[P].supply, 5.6), "5 + 4 s x 0.15")
 	_run(sim, Simulation.TICK_RATE * 40)
 	check_eq(sim.sides[P].supply, 10.0, "stops at the map's cap")
 
@@ -133,7 +133,7 @@ func test_deploy_in_spawn_zone_draws_from_the_deck() -> void:
 	check(_near(s.supply, 5.0 - 2.0 + Simulation.SUPPLY_BASE * Simulation.TICK_SEC), "cost paid after this tick's supply")
 	check_eq(s.hand, [&"javelin", &"apc", &"tank", &"scout_car"] as Array[StringName], "slot refilled from the top")
 	check_eq(s.deck, [&"mortar"] as Array[StringName], "deck shrinks")
-	check_eq(sim.field_weight(P), 2, "weight counts it")
+	check_eq(sim.field_weight(P), 3, "weight counts it (2 x 1.5)")
 
 
 func test_deploy_is_refused_where_and_when_it_should_be() -> void:
@@ -148,10 +148,10 @@ func test_deploy_is_refused_where_and_when_it_should_be() -> void:
 	sim.step()
 	check_eq(sim.last_deploy[P], Simulation.Deploy.BAD_PLACE, "sim re-checks the command")
 	check(sim.units.is_empty(), "nothing spawned")
-	sim.map.config.weight_cap = 7
+	sim.map.config.weight_cap = 11
 	sim.spawn(UnitType.tank(), P, Vector2i(10, 5))
-	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(1, 1)), Simulation.Deploy.OK, "5 + 2 fits 7")
-	check_eq(sim.can_deploy(P, 1, &"apc", Vector2i(1, 1)), Simulation.Deploy.OVER_WEIGHT, "5 + 3 is over 7")
+	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(1, 1)), Simulation.Deploy.OK, "8 + 3 fits 11")
+	check_eq(sim.can_deploy(P, 1, &"apc", Vector2i(1, 1)), Simulation.Deploy.OVER_WEIGHT, "8 + 5 is over 11")
 
 
 func test_deploy_near_a_held_point() -> void:
@@ -267,7 +267,7 @@ func test_infantry_boards_up_to_capacity() -> void:
 	check(not t.a.on_map() and not t.b.on_map(), "riders are off the map")
 	check(t.c.on_map() and t.c.board_id == 0, "third squad turned away: APC carries weight 4")
 	check_eq(sim.free_capacity(apc), 0, "full")
-	check_eq(sim.field_weight(P), 3 + 2 + 2 + 2, "riders still count as weight")
+	check_eq(sim.field_weight(P), 5 + 3 + 3 + 3, "riders still count as weight")
 	sim.issue(SimCommand.move(P, PackedInt32Array([apc.id, t.a.id]), Vector2i(16, 5)))
 	_run(sim, Simulation.TICK_RATE * 3)
 	check(apc.cell().x > 12, "APC drove off")

@@ -46,10 +46,11 @@ const ORG_RECOVER_HELD: float = 1.5
 const ORG_RECOVER_FOREST: float = 1.5
 const ORG_RECOVER_MOVING: float = 0.5
 ## Section 6 supply per second: BASE × (1 − WEIGHT_SLOWDOWN × weight / cap)
-## + PER_POINT × points held (pacing decisions of 2026-10-22 in progress.md).
-const SUPPLY_BASE: float = 0.2
+## + PER_POINT × points held (pacing decisions in progress.md; slowed again
+## by Peanut on 2026-10-23).
+const SUPPLY_BASE: float = 0.15
 const SUPPLY_WEIGHT_SLOWDOWN: float = 0.5
-const SUPPLY_PER_POINT: float = 0.05
+const SUPPLY_PER_POINT: float = 0.03
 ## Pacing (progress.md): every unit moves at 60% of its card speed, and unit
 ## weapons, support cards and the HQ gun do 70% of their listed damage.
 const SPEED_SCALE: float = 0.6

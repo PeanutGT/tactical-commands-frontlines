@@ -277,7 +277,9 @@ func _defend() -> Dictionary[int, bool]:
 func _advance(busy: Dictionary[int, bool]) -> void:
 	var army: Array[SimUnit] = _army()
 	var attack: bool = sim.field_weight(side) >= sim.map.config.weight_cap * ATTACK_AT
-	var targets: Array[Vector2i] = [_enemy_hq_cell()] if attack else _targets_or_hq()
+	var targets: Array[Vector2i] = _targets_or_hq()
+	if attack:
+		targets = [_enemy_hq_cell()]
 	var assigned: Dictionary[Vector2i, int] = {}
 	for u: SimUnit in army:
 		if busy.has(u.id) or u.forced_target or u.target_id != 0 or u.board_id != 0 or u.routing:
