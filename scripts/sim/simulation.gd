@@ -26,8 +26,8 @@ const FF_KILL_SCORE_PER_WEIGHT: int = 5
 ## A chasing unit re-plans its path at most this often when the target moves.
 const CHASE_REPATH_TICKS: int = 10
 ## Body radii (cells) for unit separation.
-const INFANTRY_RADIUS: float = 0.3
-const VEHICLE_RADIUS: float = 0.45
+const INFANTRY_RADIUS: float = 0.5
+const VEHICLE_RADIUS: float = 0.75
 ## Organization (starting values, see progress.md). Suppressed below this
 ## share of max: weapons reload 50% slower and the unit moves 25% slower.
 const SUPPRESSED_BELOW: float = 0.5
@@ -58,12 +58,17 @@ const RETREAT_REFUND: float = 0.5
 ## Section 9 搭載: infantry boards once this close to its transport (starting
 ## value), getting everyone out takes 2 s, and a destroyed transport's
 ## passengers lose half their health.
-const BOARD_RANGE_CELLS: float = 1.2
+const BOARD_RANGE_CELLS: float = 1.5
 const UNLOAD_TICKS: int = 2 * TICK_RATE
 const WRECKED_CARRIER_LOSS: float = 0.5
 
 ## Line-of-fire samples per cell of distance.
 const LOS_SAMPLES: int = 4
+## Section 10: sight is recomputed every 4 ticks (0.2 s), and at once after a
+## unit arrives.
+const VISION_TICKS: int = 4
+## Section 11: each point held scores this much per second.
+const SCORE_PER_POINT: int = 1
 
 ## Why a DEPLOY was refused.
 enum Deploy { OK, NOT_IN_HAND, NO_SUPPLY, OVER_WEIGHT, BAD_PLACE }
@@ -97,8 +102,12 @@ var deaths: Array[SimUnit] = []
 var retreated: Array[SimUnit] = []
 ## Supply and card cycle per side; deal decks with setup_side.
 var sides: Array[SideState] = [SideState.new(), SideState.new()]
+## Fog of war and who sees whom, per side.
+var vision: Vision
+## Who holds each point of interest and who is taking it.
+var points: CapturePoints
 ## GameMap.Side holding each point of interest (map.pois order), or
-## CellGroup.NO_OWNER. Nothing captures points until M5.
+## CellGroup.NO_OWNER; the same array as points.owner.
 var poi_owner: Array[int] = []
 ## Result of each side's last DEPLOY command.
 var last_deploy: Array[Deploy] = [Deploy.OK, Deploy.OK]
@@ -111,6 +120,8 @@ var _pathfinder: Pathfinder
 var _subcells_per_tick_per_mps: float = 0.0
 ## Score already taken off for friendly damage (whole 100s only).
 var _ff_damage_penalised: Array[int] = [0, 0]
+## A unit arrived since the last sight pass.
+var _vision_dirty: bool = true
 
 
 func _init(p_map: GameMap, seed_value: int = 1) -> void:
@@ -119,8 +130,9 @@ func _init(p_map: GameMap, seed_value: int = 1) -> void:
 	_pathfinder = Pathfinder.new(map)
 	_pathfinder.prepare()
 	_subcells_per_tick_per_mps = MapScale.meters_to_cells(1.0, map.config.meters_per_cell) * SUBCELL / TICK_RATE
-	poi_owner.resize(map.pois.size())
-	poi_owner.fill(CellGroup.NO_OWNER)
+	vision = Vision.new(map)
+	points = CapturePoints.new(map)
+	poi_owner = points.owner
 
 
 ## Shuffles `deck` (from the seeded PRNG) and deals `side` its opening hand
@@ -141,6 +153,7 @@ func spawn(type: UnitType, side: int, cell: Vector2i) -> SimUnit:
 	u.prev_pos = u.pos
 	units.append(u)
 	_by_id[u.id] = u
+	_vision_dirty = true
 	return u
 
 
@@ -181,6 +194,13 @@ func step() -> void:
 		_move(u)
 	_separate()
 	_carry()
+	points.update(units)
+	if tick % TICK_RATE == 0:
+		for s: int in score.size():
+			score[s] += SCORE_PER_POINT * points.held_by(s)
+	if _vision_dirty or (tick - 1) % VISION_TICKS == 0:
+		vision.update(units)
+		_vision_dirty = false
 	_fire()
 	_remove_gone()
 
@@ -214,8 +234,8 @@ func can_hit(u: SimUnit, t: SimUnit) -> bool:
 	return in_range(u, t) and line_of_fire(u, t)
 
 
-## Direct fire cannot pass through buildings or HQs; the cells the two units
-## stand on do not count. Indirect weapons lob over them.
+## Direct fire cannot pass through forest, buildings or HQs; the cells the
+## two units stand on do not count. Indirect weapons lob over them.
 func line_of_fire(u: SimUnit, t: SimUnit) -> bool:
 	if u.type.weapon != null and u.type.weapon.indirect:
 		return true
@@ -228,8 +248,7 @@ func line_of_fire(u: SimUnit, t: SimUnit) -> bool:
 		var c: Vector2i = Vector2i((a + d * (float(k) / n)).floor())
 		if c == from_cell or c == to_cell:
 			continue
-		var tt: int = map.terrain_at(c)
-		if tt == Terrain.Type.BUILDING or tt == Terrain.Type.HQ:
+		if Terrain.BLOCKS_SIGHT[map.terrain_at(c)]:
 			return false
 	return true
 
@@ -265,7 +284,7 @@ func damage_taken(t: SimUnit) -> float:
 ## Changes whenever any unit's position, orders or health differ, or any
 ## side's supply or cards; for replay checks.
 func state_hash() -> int:
-	var parts: Array = [tick, rng.state, score]
+	var parts: Array = [tick, rng.state, score, points.owner, points.taker, points.progress]
 	for s: SideState in sides:
 		parts.append_array([s.supply, s.deck, s.hand, s.cooldowns, s.effects])
 	for u: SimUnit in units:
@@ -863,22 +882,23 @@ func _fire() -> void:
 
 ## The unit `u` shoots at this tick, or null. Forced targets are kept until
 ## they die; otherwise only idle units pick targets (moving orders come first).
+## Only targets its side can see (section 10): long guns need a spotter.
 func _current_target(u: SimUnit) -> SimUnit:
 	if u.forced_target:
 		var f: SimUnit = unit(u.target_id)
-		return f if f != null and f.is_alive() and f.on_map() and can_hit(u, f) and u.type.weapon.may_target(f.type.kind) else null
+		return f if f != null and _can_shoot(u, f) and u.type.weapon.may_target(f.type.kind) else null
 	if u.is_moving():
 		u.target_id = 0
 		return null
 	var cur: SimUnit = unit(u.target_id)
-	if cur != null and cur.is_alive() and cur.on_map() and can_hit(u, cur):
+	if cur != null and _can_shoot(u, cur):
 		return cur
 	u.target_id = 0
 	var best: SimUnit = null
 	var best_mult: float = 0.0
 	var best_d: int = 0
 	for t: SimUnit in units:
-		if t.side == u.side or not t.is_alive() or not t.on_map() or not u.type.weapon.may_target(t.type.kind) or not can_hit(u, t):
+		if t.side == u.side or not u.type.weapon.may_target(t.type.kind) or not _can_shoot(u, t):
 			continue
 		# Shots that cannot get through the armour are not worth firing.
 		var m: float = pen_factor(u, t)
@@ -895,6 +915,10 @@ func _current_target(u: SimUnit) -> SimUnit:
 	if best != null:
 		u.target_id = best.id
 	return best
+
+
+func _can_shoot(u: SimUnit, t: SimUnit) -> bool:
+	return t.is_alive() and t.on_map() and vision.sees(u.side, t) and can_hit(u, t)
 
 
 ## Area weapons do not pick targets on their own when the blast would hit a friend.

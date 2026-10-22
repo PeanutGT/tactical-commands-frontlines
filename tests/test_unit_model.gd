@@ -216,6 +216,8 @@ func test_rocket_launcher_fires_volleys() -> void:
 	var sim: Simulation = _sim(["......................"])
 	sim.spawn(UnitType.of(&"mrl"), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(18, 0))
+	# Unarmed spotter 3 cells from the target, outside the blast: artillery needs eyes.
+	sim.spawn(_dummy(), P, Vector2i(15, 0))
 	var shots: Array[int] = []
 	for i: int in 13 * Simulation.TICK_RATE:
 		sim.step()
