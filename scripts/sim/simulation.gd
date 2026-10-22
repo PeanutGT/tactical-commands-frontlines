@@ -409,7 +409,7 @@ func damage_taken(t: SimUnit) -> float:
 ## Changes whenever any unit's position, orders or health differ, or any
 ## side's supply or cards; for replay checks.
 func state_hash() -> int:
-	var parts: Array = [tick, rng.state, score, points.owner, points.taker, points.progress, winner,
+	var parts: Array = [tick, rng.state, score, points.owner, points.taker, points.progress, points.presence, winner,
 		bridges.hp, bridges.broken, bridges.fuses]
 	for s: SideState in sides:
 		parts.append_array([s.supply, s.deck, s.hand, s.cooldowns])
@@ -467,8 +467,8 @@ func can_deploy(side: int, slot: int, card: StringName, cell: Vector2i, cell2: V
 	return Deploy.OK
 
 
-## Section 7: inside the side's own spawn zone, or near a point it holds,
-## on ground the unit can stand on.
+## Section 7: inside the side's own spawn zone, or near a point it holds
+## that no enemy stands on, on ground the unit can stand on.
 func deploy_cell_ok(side: int, cell: Vector2i, vehicle: bool) -> bool:
 	if not Movement.passable(map, cell, vehicle):
 		return false
@@ -476,7 +476,7 @@ func deploy_cell_ok(side: int, cell: Vector2i, vehicle: bool) -> bool:
 		return true
 	var at: Vector2 = Vector2(cell) + Vector2(0.5, 0.5)
 	for i: int in map.pois.size():
-		if poi_owner[i] == side and at.distance_to(map.pois[i].center) <= DEPLOY_NEAR_POINT_CELLS:
+		if poi_owner[i] == side and not points.under_attack(i, side) and at.distance_to(map.pois[i].center) <= DEPLOY_NEAR_POINT_CELLS:
 			return true
 	return false
 

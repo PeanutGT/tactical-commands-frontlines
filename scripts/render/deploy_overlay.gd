@@ -72,7 +72,7 @@ func _draw() -> void:
 	for c: Vector2i in _spawn_cells:
 		draw_rect(Rect2(Vector2(c) * s, Vector2(s, s)), ZONE)
 	for i: int in _sim.map.pois.size():
-		if _sim.poi_owner[i] == side:
+		if _sim.poi_owner[i] == side and not _sim.points.under_attack(i, side):
 			draw_circle(_sim.map.pois[i].center * s, Simulation.DEPLOY_NEAR_POINT_CELLS * s, ZONE)
 	if _sim.map.in_bounds(_cursor):
 		var ok: bool = _sim.deploy_cell_ok(side, _cursor, UnitType.of(card).vehicle)
@@ -82,7 +82,7 @@ func _draw() -> void:
 func _draw_support(s: float) -> void:
 	if card == &"supply_convoy":
 		for i: int in _sim.map.pois.size():
-			if _sim.poi_owner[i] == side:
+			if _sim.poi_owner[i] == side and not _sim.points.under_attack(i, side):
 				draw_circle(_sim.map.pois[i].center * s, Simulation.DEPLOY_NEAR_POINT_CELLS * s, ZONE)
 	if not _sim.map.in_bounds(_cursor):
 		return

@@ -15,13 +15,13 @@ const DEPLOY_REFUSED: Dictionary[Simulation.Deploy, String] = {
 	Simulation.Deploy.NOT_IN_HAND: "這張卡已不在手上",
 	Simulation.Deploy.NO_SUPPLY: "補給不足",
 	Simulation.Deploy.OVER_WEIGHT: "超過權重上限",
-	Simulation.Deploy.BAD_PLACE: "只能出在己方出兵區或己方據點附近",
+	Simulation.Deploy.BAD_PLACE: "只能出在己方出兵區或沒有敵人的己方據點附近",
 }
 ## Why a support card could not be dropped there, per Card.Aim.
 const AIM_REFUSED: Array[String] = [
 	"不能出在地圖外",
 	"要落在己方看得到的地方",
-	"運補車隊要從己方據點出發",
+	"運補車隊要從沒有敵人的己方據點出發",
 	"要點在看得到的敵方單位或橋上",
 	"要點在己方裝甲單位上",
 ]

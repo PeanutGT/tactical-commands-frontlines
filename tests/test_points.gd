@@ -109,3 +109,17 @@ func test_replay_with_captures_matches() -> void:
 		_run(sim, Simulation.TICK_RATE * 20)
 		hashes.append(sim.state_hash())
 	check_eq(hashes[0], hashes[1], "same seed, same orders, same state")
+
+
+func test_no_deploying_at_a_point_under_attack() -> void:
+	var sim: Simulation = _sim()
+	sim.poi_owner[0] = P
+	sim.step()
+	check(sim.deploy_cell_ok(P, CENTRE + Vector2i(0, 2), false), "held and quiet")
+	sim.spawn(_dummy(), E, CENTRE + Vector2i(1, 1))
+	sim.step()
+	check(not sim.deploy_cell_ok(P, CENTRE + Vector2i(0, 2), false), "an enemy is taking it")
+	sim.spawn(_dummy(), P, CENTRE)
+	sim.step()
+	check(not sim.deploy_cell_ok(P, CENTRE + Vector2i(0, 2), false), "still not while contested")
+	check(sim.deploy_cell_ok(P, Vector2i(0, 2), false), "the spawn zone is always fine")

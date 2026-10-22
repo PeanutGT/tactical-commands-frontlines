@@ -47,7 +47,8 @@ static func can_aim(sim: Simulation, side: int, card: StringName, cell: Vector2i
 		Card.Aim.SEEN:
 			return sim.vision.cell_visible(side, cell)
 		Card.Aim.OWN_POINT:
-			return sim.near_own_point(side, cell) >= 0 and Movement.passable(sim.map, cell, true)
+			var p: int = sim.near_own_point(side, cell)
+			return p >= 0 and not sim.points.under_attack(p, side) and Movement.passable(sim.map, cell, true)
 		Card.Aim.ENEMY:
 			return missile_target(sim, side, cell) != null or _standing_bridge(sim, cell) >= 0
 		Card.Aim.OWN_ARMOR:
