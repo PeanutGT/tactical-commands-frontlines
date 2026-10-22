@@ -166,32 +166,40 @@ func test_deploy_near_a_held_point() -> void:
 	check_eq(sim.can_deploy(P, 0, &"infantry", near), Simulation.Deploy.BAD_PLACE, "held by the enemy")
 
 
-func test_dead_unit_card_cools_down_then_returns_to_the_bottom() -> void:
+func test_played_card_cools_down_while_its_unit_lives() -> void:
+	var sim: Simulation = _sim()
+	var s: SideState = _deal(sim, [&"infantry", &"apc", &"tank", &"scout_car"], [&"mortar"])
+	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(1, 1)))
+	sim.step()
+	check_eq(s.cooldowns.size(), 1, "card cooling from the moment it was played")
+	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) - 1)
+	check(not s.deck.has(&"infantry"), "not back yet after 6 s minus a tick")
+	sim.step()
+	check_eq(s.deck.back(), &"infantry", "back at the bottom")
+	check_eq(sim.units.size(), 1, "while the first squad is still on the field")
+
+
+func test_dying_costs_no_extra_cooldown() -> void:
 	var sim: Simulation = _sim()
 	var s: SideState = _deal(sim, [&"apc", &"tank", &"scout_car", &"javelin"], [&"mortar"])
 	var u: SimUnit = _card_unit(sim, &"infantry", P, Vector2i(10, 4))
 	u.hp = 0.0
 	sim.step()
 	check(sim.unit(u.id) == null, "dead")
-	check_eq(s.cooldowns.size(), 1, "card cooling")
-	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) - 1)
-	check_eq(s.deck, [&"mortar"] as Array[StringName], "not back yet after 6 s minus a tick")
-	sim.step()
-	check_eq(s.deck, [&"mortar", &"infantry"] as Array[StringName], "back at the bottom")
-	check(s.cooldowns.is_empty(), "cooldown done")
+	check(s.cooldowns.is_empty(), "nothing new cooling")
 
 
-func test_empty_deck_leaves_the_slot_empty_until_a_card_returns() -> void:
+func test_same_card_twice_on_the_field() -> void:
 	var sim: Simulation = _sim()
 	var s: SideState = _deal(sim, [&"infantry", &"apc", &"tank", &"scout_car"], [])
 	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(1, 1)))
 	sim.step()
 	check_eq(s.hand[0], SideState.EMPTY, "nothing to draw")
-	var u: SimUnit = sim.units[0]
-	u.hp = 0.0
-	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) + 1)
+	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE))
 	check_eq(s.hand[0], &"infantry", "the returning card fills the empty slot")
-	check(s.deck.is_empty(), "and does not wait in the deck")
+	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(2, 2)))
+	sim.step()
+	check_eq(sim.units.size(), 2, "two squads from one card")
 
 
 func test_retreat_drives_home_and_refunds_half() -> void:
@@ -215,7 +223,7 @@ func test_retreat_drives_home_and_refunds_half() -> void:
 	check(u.cell().x <= 3, "inside the spawn zone, not where the later move pointed")
 	check_eq(sim.retreated.size(), 1, "reported as retreated, not dead")
 	check(sim.deaths.is_empty(), "no wreck")
-	check_eq(s.deck.back(), &"infantry", "card straight to the bottom")
+	check(not s.deck.has(&"infantry"), "the card was already cycling: nothing comes back")
 	check(s.cooldowns.is_empty(), "no cooldown")
 
 
@@ -314,7 +322,7 @@ func test_wrecked_transport_throws_out_hurt_passengers() -> void:
 	for r: SimUnit in [t.a, t.b]:
 		check(r.on_map(), "rider %d out" % r.id)
 		check(_near(r.hp, r.type.max_hp * 0.5), "rider %d lost half its health" % r.id)
-	check_eq(sim.sides[P].cooldowns.size(), 1, "only the APC card cools down")
+	check(sim.sides[P].cooldowns.is_empty(), "dying adds no cooldown")
 
 
 func test_retreating_transport_takes_its_riders_home() -> void:
@@ -331,7 +339,7 @@ func test_retreating_transport_takes_its_riders_home() -> void:
 		if sim.unit(apc.id) == null:
 			break
 	check(sim.unit(apc.id) == null and sim.unit(t.a.id) == null and sim.unit(t.b.id) == null, "all three left")
-	check_eq(s.deck, [&"apc", &"infantry", &"infantry"] as Array[StringName], "their cards return")
+	check(s.deck.is_empty(), "their cards were already cycling")
 	check(s.supply >= 1.5 + 1.0 + 1.0, "half refunds for all three")
 
 

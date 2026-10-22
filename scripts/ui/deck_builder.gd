@@ -108,7 +108,7 @@ static func card_details(id: StringName) -> String:
 		text += "\n傷害 %d｜射程 %.0f 格｜穿甲 %d｜壓制 %d" % [t.weapon.damage, t.weapon.range_m / MapScale.STANDARD_METERS_PER_CELL, t.weapon.penetration, t.weapon.suppression]
 	if t.transport_capacity > 0:
 		text += "\n可載步兵權重 %d" % t.transport_capacity
-	text += "\n陣亡後冷卻 %d 秒" % roundi(Card.cooldown_sec(id))
+	text += "\n打出後冷卻 %d 秒再回牌庫" % roundi(Card.cooldown_sec(id))
 	return text
 
 

@@ -1,9 +1,9 @@
 class_name SideState
 extends RefCounted
 ## One side's supply and card cycle (sections 6 and 7). A card is in exactly
-## one place: the draw pile, a hand slot, on the field (a living unit or a
-## supply truck), in a running support effect (Simulation.effects), or
-## cooling down.
+## one place: the draw pile, a hand slot, cooling down after being played (a
+## unit card), on the field (a supply truck), or in a running support effect
+## (Simulation.effects).
 
 ## Hand slot with no card in it.
 const EMPTY: StringName = &""

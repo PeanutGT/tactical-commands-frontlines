@@ -520,6 +520,10 @@ func _run_deploy(cmd: SimCommand) -> void:
 	if Card.is_unit(cmd.card):
 		var u: SimUnit = spawn(UnitType.of(cmd.card), cmd.side, cmd.target)
 		u.card = cmd.card
+		# Card cycle (Peanut, 2026-10-23): the card cools down from the moment
+		# it is played, so the same card can be played again while its first
+		# unit still lives; weight and supply are the only limits.
+		s.start_cooldown(cmd.card, roundi(Card.cooldown_sec(cmd.card) * TICK_RATE))
 	elif cmd.card == &"supply_convoy":
 		var t: SimUnit = spawn(UnitType.supply_truck(), cmd.side, cmd.target)
 		t.card = cmd.card
@@ -1250,10 +1254,10 @@ func _penalise(side: int, points: int) -> void:
 	score[side] = maxi(0, score[side] - points)
 
 
-## Takes dead and retreated units off the field. A dead unit's card cools down
-## for cost × 3 s; a retreated unit's card goes straight back with half its
-## cost refunded, its passengers' cards too. A destroyed transport's
-## passengers get out hurt.
+## Takes dead and retreated units off the field. A unit card is already
+## cycling back from when it was played, so dying costs nothing more and a
+## retreat only refunds half its cost (its passengers' too). A destroyed
+## transport's passengers get out hurt.
 func _remove_gone() -> void:
 	var leaving: Dictionary[int, bool] = {}
 	for u: SimUnit in _home_cells_reached():
@@ -1271,8 +1275,6 @@ func _remove_gone() -> void:
 			if u.is_convoy():
 				# A truck shot up delivers nothing; its card goes straight back.
 				sides[u.side].return_card(u.card)
-			elif u.card != &"":
-				sides[u.side].start_cooldown(u.card, roundi(Card.cooldown_sec(u.card) * TICK_RATE))
 		elif u.is_convoy() and convoy_arrived(u):
 			retreated.append(u)
 			var cs: SideState = sides[u.side]
@@ -1283,7 +1285,6 @@ func _remove_gone() -> void:
 			if u.card != &"":
 				var s: SideState = sides[u.side]
 				s.gain(Card.cost(u.card) * RETREAT_REFUND, map.config.supply_cap)
-				s.return_card(u.card)
 		else:
 			kept.append(u)
 	for u: SimUnit in deaths:

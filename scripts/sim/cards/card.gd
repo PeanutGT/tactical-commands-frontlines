@@ -96,7 +96,7 @@ static func faction(id: StringName) -> StringName:
 	return &"" if row == null else row[2]
 
 
-## Section 7: a unit card that died waits cost × 3 s before going back.
+## A played unit card waits cost × 3 s before going back to the deck.
 static func cooldown_sec(id: StringName) -> float:
 	return cost(id) * 3.0
 
