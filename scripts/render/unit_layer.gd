@@ -31,6 +31,8 @@ const BLAST_COLOR: Color = Color("ffb04a")
 ## Retreating formations are drawn see-through.
 const RETREAT_ALPHA: float = 0.5
 const PASSENGER_PIP: float = 0.18  # cells
+## Everything drawn for a unit is this much bigger than the sizes above.
+const UNIT_SCALE: float = 2.0
 
 var sim: Simulation
 ## Side whose eyes the view uses: other sides' units show only while seen.
@@ -62,7 +64,7 @@ func world_pos(u: SimUnit) -> Vector2:
 ## Rough radius in world pixels, used for clicking on a unit.
 func pick_radius(u: SimUnit) -> float:
 	var cells: float = vehicle_footprint(u.type).x * 0.5 if u.type.vehicle else INFANTRY_RADIUS
-	return maxf(cells, 0.4) * float(_style.cell_px)
+	return maxf(cells, 0.4) * UNIT_SCALE * float(_style.cell_px)
 
 
 ## Call after every simulation tick to pick up its shots and deaths.
@@ -126,6 +128,8 @@ func _draw() -> void:
 			var tc: Color = _style.unit_colors[GameMap.Side.ENEMY]
 			tc.a = 0.6
 			draw_line(world_pos(u), world_pos(t), tc, 1.0)
+	# Unit figures, bars and markers are drawn UNIT_SCALE times their cell size.
+	s *= UNIT_SCALE
 	for u: SimUnit in sim.units:
 		if not shows(u):
 			continue

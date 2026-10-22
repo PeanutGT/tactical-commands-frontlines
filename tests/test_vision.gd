@@ -34,11 +34,11 @@ func _seen(sim: Simulation, viewer_side: int, t: SimUnit) -> bool:
 func test_three_fog_states() -> void:
 	var sim: Simulation = _sim(OPEN)
 	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(1, 2))
-	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.UNEXPLORED, "far cell unexplored before any tick")
+	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.EXPLORED, "the whole map starts explored")
 	sim.step()
 	check_eq(sim.vision.fog_at(P, Vector2i(5, 2)), Vision.Fog.VISIBLE, "4 cells away in sight")
-	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.UNEXPLORED, "13 cells away beyond 7-cell sight")
-	check_eq(sim.vision.fog_at(E, Vector2i(1, 2)), Vision.Fog.UNEXPLORED, "the other side sees nothing")
+	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.EXPLORED, "13 cells away beyond 10.5-cell sight")
+	check_eq(sim.vision.fog_at(E, Vector2i(1, 2)), Vision.Fog.EXPLORED, "the other side does not see it")
 	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(13, 2)))
 	_run(sim, Simulation.TICK_RATE * 12)
 	check_eq(u.cell(), Vector2i(13, 2), "walked across")
@@ -81,10 +81,10 @@ func test_height_adds_two_cells_of_sight_per_level() -> void:
 	var rows: Array[String] = ["...............", "..............."]
 	var sim: Simulation = _sim(rows, ["100000000000000", "000000000000000"])
 	var high: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
-	check_eq(sim.vision.sight_cells(high), 9.0, "7 + 2 on level 1")
+	check_eq(sim.vision.sight_cells(high), 12.5, "7 × 1.5 + 2 on level 1")
 	sim.step()
-	check(sim.vision.cell_visible(P, Vector2i(9, 0)), "9 cells out from level 1")
-	check(not sim.vision.cell_visible(P, Vector2i(10, 0)), "but not 10")
+	check(sim.vision.cell_visible(P, Vector2i(12, 0)), "12 cells out from level 1")
+	check(not sim.vision.cell_visible(P, Vector2i(13, 0)), "but not 13")
 
 
 func test_high_ground_hides_units_until_close() -> void:
@@ -146,7 +146,7 @@ func test_artillery_needs_a_spotter() -> void:
 	sim.spawn(UnitType.mortar(), P, Vector2i(0, 0))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(10, 0))
 	_run(sim, Simulation.TICK_RATE * 2)
-	check_eq(t.hp, t.type.max_hp, "10 cells: in mortar range, beyond its 6-cell sight")
+	check_eq(t.hp, t.type.max_hp, "10 cells: in mortar range, beyond its 9-cell sight")
 	sim.spawn(UnitType.scout_car(), P, Vector2i(4, 0))
 	_run(sim, Simulation.TICK_RATE * 2)
 	check(t.hp < t.type.max_hp, "a scout car's sight lets it fire")
@@ -159,3 +159,22 @@ func test_forest_blocks_direct_fire() -> void:
 	var past: SimUnit = sim.spawn(_dummy(), E, Vector2i(5, 3))
 	check(not sim.line_of_fire(tank, through), "through the forest")
 	check(sim.line_of_fire(tank, past), "past it")
+
+
+func test_hq_watches_around_it() -> void:
+	var sim: Simulation = _sim([
+		"p...................",
+		"phhh................",
+		"phhh.......f........",
+		"phhh................",
+		"p...................",
+	])
+	var near: SimUnit = sim.spawn(_dummy(), E, Vector2i(10, 2))
+	var far: SimUnit = sim.spawn(_dummy(), E, Vector2i(15, 2))
+	var wood: SimUnit = sim.spawn(_dummy(), E, Vector2i(11, 2))
+	sim.step()
+	check(sim.vision.cell_visible(P, Vector2i(4, 2)), "next to the HQ")
+	check(_seen(sim, P, near), "8 cells from the HQ centre, no units needed")
+	check(not _seen(sim, P, far), "13 cells: beyond HQ sight")
+	check(not _seen(sim, P, wood), "units in forest stay hidden")
+	check(not sim.vision.cell_visible(E, Vector2i(4, 2)), "the enemy gets nothing from our HQ")

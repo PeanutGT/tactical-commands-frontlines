@@ -1,7 +1,9 @@
 class_name Vision
 extends RefCounted
 ## Fog of war and line of sight (sections 4.2 and 10), one view per side.
-## Every cell is unexplored, explored (seen before) or visible now. Sight is
+## Every cell is unexplored, explored (seen before) or visible now; a match
+## starts with the whole map explored, so the ground is known but enemies are
+## not. Sight is
 ## traced along grid rays from each unit's cell: forest, buildings and HQs
 ## stop a ray (the blocking cell itself is still seen), and a cell in between
 ## that is higher than both the viewer and the cell looked at hides it (ridge).
@@ -16,6 +18,10 @@ const FOREST_REVEAL_CELLS: float = 3.0
 ## Section 4.2: from two or more levels below, a unit is only seen this close.
 const HIGH_GROUND_REVEAL_CELLS: float = 4.0
 const HIGH_GROUND_LEVELS: int = 2
+## Unit sight is the card's vision times this (Peanut asked for longer sight).
+const VISION_SCALE: float = 1.5
+## Each HQ watches this far around its centre for its side (starting value).
+const HQ_SIGHT_CELLS: float = 10.0
 ## The ground never changes, so what a cell sees is worked out once per sight
 ## radius and kept; the cache starts over past this many views.
 const MAX_CACHED_VIEWS: int = 4096
@@ -33,7 +39,8 @@ var _lit: Array[PackedInt32Array] = [PackedInt32Array(), PackedInt32Array()]
 ## Viewer serial number per cell; tells which cells the current viewer sees.
 var _stamp: PackedInt32Array = PackedInt32Array()
 var _serial: int = 0
-## Cell indices seen from a cell: Vector3i(x, y, radius in 1/100 cells) -> PackedInt32Array.
+## Cell indices seen from a cell: Vector3i(cell index, radius in 1/100
+## cells, cells around the origin that do not block) -> PackedInt32Array.
 var _views: Dictionary[Vector3i, PackedInt32Array] = {}
 ## Cells gathered by the trace in progress, and its own visited marks.
 var _traced: PackedInt32Array = PackedInt32Array()
@@ -47,6 +54,7 @@ func _init(p_map: GameMap) -> void:
 	for s: int in 2:
 		var f: PackedByteArray = PackedByteArray()
 		f.resize(n)
+		f.fill(Fog.EXPLORED)
 		fog.append(f)
 	_stamp.resize(n)
 	_stamp.fill(0)
@@ -71,7 +79,7 @@ func sees(side: int, u: SimUnit) -> bool:
 func sight_cells(u: SimUnit) -> float:
 	var mpc: float = map.config.meters_per_cell
 	var bonus_m: float = MapScale.standard_cells_to_meters(HEIGHT_BONUS_CELLS) * map.elevation_at(u.cell())
-	return MapScale.meters_to_cells(u.type.vision_m + bonus_m, mpc)
+	return MapScale.meters_to_cells(u.type.vision_m * VISION_SCALE + bonus_m, mpc)
 
 
 ## Rebuilds both sides' views from the units on the map.
@@ -83,11 +91,19 @@ func update(units: Array[SimUnit]) -> void:
 			f[i] = Fog.EXPLORED
 		_lit[side] = PackedInt32Array()
 		seen[side] = {}
+	for hq: CellGroup in map.hqs:
+		_serial += 1
+		var c: Vector2i = Vector2i(hq.center.floor())
+		_light_view(hq.owner, _view(c, HQ_SIGHT_CELLS, 1))
+		var centre: Vector2 = hq.center * Simulation.SUBCELL
+		for t: SimUnit in units:
+			if t.side != hq.owner and t.on_map() and t.is_alive() and _stamp[map.index_of(t.cell())] == _serial 					and map.terrain_at(t.cell()) != Terrain.Type.FOREST:
+				seen[hq.owner][t.id] = true
 	for u: SimUnit in units:
 		if not u.on_map() or not u.is_alive() or u.type.kind == UnitType.Kind.AIR:
 			continue
 		_serial += 1
-		_cast(u)
+		_light_view(u.side, _view(u.cell(), sight_cells(u), 0))
 		for t: SimUnit in units:
 			if t.side != u.side and t.on_map() and t.is_alive() and not seen[u.side].has(t.id) and _spots(u, t):
 				seen[u.side][t.id] = true
@@ -109,31 +125,32 @@ func _spots(viewer: SimUnit, t: SimUnit) -> bool:
 	return true
 
 
-## Lights every cell `u` can see and stamps them with the current viewer.
-func _cast(u: SimUnit) -> void:
-	var o: Vector2i = u.cell()
-	var r: float = sight_cells(u)
-	var key: Vector3i = Vector3i(o.x, o.y, roundi(r * 100.0))
-	var cells: PackedInt32Array
+## Cells seen from `o` within `r` cells, cached. Blockers within `inner`
+## cells of `o` (an HQ's own block) do not stop sight.
+func _view(o: Vector2i, r: float, inner: int) -> PackedInt32Array:
+	var key: Vector3i = Vector3i(map.index_of(o), roundi(r * 100.0), inner)
 	if _views.has(key):
-		cells = _views[key]
-	else:
-		cells = _trace(o, r)
-		if _views.size() >= MAX_CACHED_VIEWS:
-			_views.clear()
-		_views[key] = cells
-	var f: PackedByteArray = fog[u.side]
+		return _views[key]
+	var cells: PackedInt32Array = _trace(o, r, inner)
+	if _views.size() >= MAX_CACHED_VIEWS:
+		_views.clear()
+	_views[key] = cells
+	return cells
+
+
+## Lights `cells` for `side` and stamps them with the current viewer.
+func _light_view(side: int, cells: PackedInt32Array) -> void:
+	var f: PackedByteArray = fog[side]
 	for i: int in cells:
 		_stamp[i] = _serial
 		if f[i] != Fog.VISIBLE:
 			f[i] = Fog.VISIBLE
-			_lit[u.side].append(i)
+			_lit[side].append(i)
 
 
-## Cells seen from `o` within `r` cells: rays to each cell on the edge of a
-## square around it, walked outwards until they leave the sight circle or hit
-## a blocker.
-func _trace(o: Vector2i, r: float) -> PackedInt32Array:
+## Rays to each cell on the edge of a square around `o`, walked outwards
+## until they leave the sight circle or hit a blocker.
+func _trace(o: Vector2i, r: float, inner: int) -> PackedInt32Array:
 	_trace_serial += 1
 	_traced = PackedInt32Array()
 	_mark(o)
@@ -141,15 +158,15 @@ func _trace(o: Vector2i, r: float) -> PackedInt32Array:
 	var reach: int = ceili(r)
 	var eo: int = map.elevation_at(o)
 	for k: int in range(-reach, reach):
-		_ray(o, eo, o + Vector2i(k, -reach), r2)
-		_ray(o, eo, o + Vector2i(reach, k), r2)
-		_ray(o, eo, o + Vector2i(-k, reach), r2)
-		_ray(o, eo, o + Vector2i(-reach, -k), r2)
+		_ray(o, eo, o + Vector2i(k, -reach), r2, inner)
+		_ray(o, eo, o + Vector2i(reach, k), r2, inner)
+		_ray(o, eo, o + Vector2i(-k, reach), r2, inner)
+		_ray(o, eo, o + Vector2i(-reach, -k), r2, inner)
 	return _traced
 
 
 ## Bresenham walk from `o` towards `to`.
-func _ray(o: Vector2i, eo: int, to: Vector2i, r2: float) -> void:
+func _ray(o: Vector2i, eo: int, to: Vector2i, r2: float, inner: int) -> void:
 	var dx: int = absi(to.x - o.x)
 	var dy: int = -absi(to.y - o.y)
 	var sx: int = 1 if to.x > o.x else -1
@@ -171,7 +188,7 @@ func _ray(o: Vector2i, eo: int, to: Vector2i, r2: float) -> void:
 		var ec: int = map.elevation_at(c)
 		if ridge <= maxi(eo, ec):
 			_mark(c)
-		if Terrain.BLOCKS_SIGHT[map.terrain_at(c)]:
+		if Terrain.BLOCKS_SIGHT[map.terrain_at(c)] and maxi(absi(c.x - o.x), absi(c.y - o.y)) > inner:
 			return
 		ridge = maxi(ridge, ec)
 
