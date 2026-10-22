@@ -58,8 +58,12 @@ func _process(delta: float) -> void:
 	var ticks: int = 0
 	while _tick_time >= Simulation.TICK_SEC and ticks < MAX_TICKS_PER_FRAME:
 		sim.step()
+		_units.capture_tick()
 		_tick_time -= Simulation.TICK_SEC
 		ticks += 1
+	if ticks > 0:
+		_selection.prune_dead()
+		_hud.set_score(sim.score[GameMap.Side.PLAYER], sim.ff_penalty[GameMap.Side.PLAYER])
 	if ticks == MAX_TICKS_PER_FRAME:
 		_tick_time = minf(_tick_time, Simulation.TICK_SEC)
 	_units.alpha = _tick_time / Simulation.TICK_SEC
@@ -83,25 +87,38 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_camera.fit()
 
 
-## M2 test units: a mixed group at our spawn and a few enemies at theirs.
+## M3 test units: a mixed group at our spawn, enemies at theirs, a held
+## enemy outpost at the objective nearest to us and an enemy tank and mortar
+## at the next one.
 func _spawn_placeholders() -> void:
 	var ours: Array[UnitType] = [
 		UnitType.infantry(), UnitType.infantry(), UnitType.infantry(), UnitType.infantry(),
-		UnitType.scout_car(), UnitType.tank(), UnitType.tank(),
+		UnitType.scout_car(), UnitType.tank(), UnitType.tank(), UnitType.mortar(),
 	]
 	var theirs: Array[UnitType] = [UnitType.infantry(), UnitType.infantry(), UnitType.tank()]
-	if map.player_spawn != null:
-		_spawn_group(ours, GameMap.Side.PLAYER, Vector2i(map.player_spawn.center.round()))
-	if map.enemy_spawn != null:
-		_spawn_group(theirs, GameMap.Side.ENEMY, Vector2i(map.enemy_spawn.center.round()))
+	if map.player_spawn == null or map.enemy_spawn == null:
+		return
+	var home: Vector2 = map.player_spawn.center
+	_spawn_group(ours, GameMap.Side.PLAYER, Vector2i(home.round()))
+	_spawn_group(theirs, GameMap.Side.ENEMY, Vector2i(map.enemy_spawn.center.round()))
+	var pois: Array[CellGroup] = map.pois.duplicate()
+	pois.sort_custom(func(a: CellGroup, b: CellGroup) -> bool:
+		return a.center.distance_squared_to(home) < b.center.distance_squared_to(home))
+	if pois.size() >= 1:
+		var outpost: PackedInt32Array = _spawn_group([UnitType.infantry(), UnitType.infantry(), UnitType.scout_car()] as Array[UnitType],
+			GameMap.Side.ENEMY, Vector2i(pois[0].center.round()))
+		sim.issue(SimCommand.hold(GameMap.Side.ENEMY, outpost))
+	if pois.size() >= 2:
+		_spawn_group([UnitType.tank(), UnitType.mortar()] as Array[UnitType], GameMap.Side.ENEMY, Vector2i(pois[1].center.round()))
 
 
-func _spawn_group(types: Array[UnitType], side: int, around: Vector2i) -> void:
-	var i: int = 0
+## Spawns `types` spread out around `around`; returns their ids.
+func _spawn_group(types: Array[UnitType], side: int, around: Vector2i) -> PackedInt32Array:
+	var ids: PackedInt32Array = PackedInt32Array()
 	for off: Vector2i in Simulation.slot_offsets(types.size() * 4):
-		if i == types.size():
-			return
+		if ids.size() == types.size():
+			break
 		var c: Vector2i = around + off * 2
-		if Movement.passable(sim.map, c, types[i].vehicle):
-			sim.spawn(types[i], side, c)
-			i += 1
+		if Movement.passable(sim.map, c, types[ids.size()].vehicle):
+			ids.append(sim.spawn(types[ids.size()], side, c).id)
+	return ids

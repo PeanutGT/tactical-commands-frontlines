@@ -1,7 +1,8 @@
 class_name SelectionController
 extends Node2D
 ## PC unit control (section 3): left-click selects, left-drag box-selects,
-## Shift adds, right-click moves, X stops. Orders go to the simulation as
+## Shift adds, right-click moves (or attacks the enemy under the cursor),
+## Ctrl+right-click force-attacks any unit, H toggles hold position, X stops. Orders go to the simulation as
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
@@ -61,7 +62,12 @@ func _unhandled_input(event: InputEvent) -> void:
 				queue_redraw()
 				get_viewport().set_input_as_handled()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
-			_order_move(_to_world(mb.position))
+			var world: Vector2 = _to_world(mb.position)
+			var t: SimUnit = _unit_at(world, -1 if mb.ctrl_pressed else 1 - side)
+			if t != null:
+				_order_attack(t)
+			else:
+				_order_move(world)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _pressing:
 		var mm: InputEventMouseMotion = event
@@ -72,11 +78,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 	elif event is InputEventKey:
 		var key: InputEventKey = event
-		if key.pressed and not key.echo and key.physical_keycode == KEY_X:
-			var ids: PackedInt32Array = selected_ids()
-			if not ids.is_empty():
-				_sim.issue(SimCommand.stop(side, ids))
-			get_viewport().set_input_as_handled()
+		if not key.pressed or key.echo:
+			return
+		var ids: PackedInt32Array = selected_ids()
+		match key.physical_keycode:
+			KEY_X:
+				if not ids.is_empty():
+					_sim.issue(SimCommand.stop(side, ids))
+				get_viewport().set_input_as_handled()
+			KEY_H:
+				if not ids.is_empty():
+					_sim.issue(SimCommand.hold(side, ids))
+				get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -103,16 +116,32 @@ func _to_world(screen: Vector2) -> Vector2:
 	return get_canvas_transform().affine_inverse() * screen
 
 
-func _select_click(world: Vector2, add: bool) -> void:
+## Drops dead units from the selection; call after simulation ticks.
+func prune_dead() -> void:
+	var before: int = _layer.selected.size()
+	for id: int in _layer.selected.keys():
+		if _sim.unit(id) == null:
+			_layer.selected.erase(id)
+	if _layer.selected.size() != before:
+		selection_changed.emit(_layer.selected.size())
+
+
+## Closest unit of `of_side` under `world` (-1 = any side), or null.
+func _unit_at(world: Vector2, of_side: int) -> SimUnit:
 	var best: SimUnit = null
 	var best_d: float = INF
 	for u: SimUnit in _sim.units:
-		if u.side != side:
+		if of_side >= 0 and u.side != of_side:
 			continue
 		var d: float = _layer.world_pos(u).distance_to(world)
 		if d <= _layer.pick_radius(u) and d < best_d:
 			best_d = d
 			best = u
+	return best
+
+
+func _select_click(world: Vector2, add: bool) -> void:
+	var best: SimUnit = _unit_at(world, side)
 	if not add:
 		_layer.selected.clear()
 	if best != null:
@@ -130,6 +159,16 @@ func _select_box(rect: Rect2, add: bool) -> void:
 		if u.side == side and rect.has_point(_layer.world_pos(u)):
 			_layer.selected[u.id] = true
 	selection_changed.emit(_layer.selected.size())
+
+
+func _order_attack(t: SimUnit) -> void:
+	var ids: PackedInt32Array = selected_ids()
+	if ids.is_empty():
+		return
+	_sim.issue(SimCommand.attack(side, ids, t.id))
+	_marker_pos = _layer.world_pos(t)
+	_marker_left = MARKER_SEC
+	queue_redraw()
 
 
 func _order_move(world: Vector2) -> void:

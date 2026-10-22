@@ -117,3 +117,27 @@ func test_hecheng_crosses_river() -> void:
 		var p: Array[Vector2i] = _path(map, from, to, vehicle)
 		check(not p.is_empty() and p.back() == to, "vehicle=%s reaches the enemy spawn" % vehicle)
 		_check_walkable(map, from, p, vehicle, "hecheng vehicle=%s" % vehicle)
+
+
+func test_smoothing_cuts_open_ground() -> void:
+	var map: GameMap = map_from_rows(["......", "......", "......"])
+	var from: Vector2i = Vector2i(0, 0)
+	var raw: Array[Vector2i] = _path(map, from, Vector2i(5, 2))
+	var smooth: Array[Vector2i] = Movement.smooth(map, from, raw, false)
+	check_eq(smooth, [Vector2i(5, 2)] as Array[Vector2i], "one straight leg")
+
+
+func test_smoothing_keeps_out_of_slow_and_blocked_cells() -> void:
+	var map: GameMap = map_from_rows([
+		".......",
+		".##ff..",
+		".......",
+	])
+	var from: Vector2i = Vector2i(0, 0)
+	var raw: Array[Vector2i] = _path(map, from, Vector2i(6, 2))
+	var smooth: Array[Vector2i] = Movement.smooth(map, from, raw, true)
+	check_eq(smooth.back(), Vector2i(6, 2), "same goal")
+	var prev: Vector2i = from
+	for c: Vector2i in smooth:
+		check(Movement.straight_leg_ok(map, prev, c, true, 1.0), "leg %s -> %s crosses a building or forest" % [prev, c])
+		prev = c
