@@ -6,6 +6,8 @@ PC RTS card game built with Godot 4 (GDScript). Design: `docs/TCF_交接摘要.m
 1. Install Godot 4.7 (standard build, not .NET): https://godotengine.org/download
 2. Open Godot, Import, pick `project.godot` in this folder, then press F5.
 
+Controls: left-click select, left-drag box select (Shift adds), right-click move, X stop. Camera: wheel zoom, middle-drag or Space + left-drag pan, WASD / arrows / screen edge scroll, F fit map, G grid.
+
 ## Test
 ```sh
 godot --headless --path . --import
@@ -13,7 +15,7 @@ godot --headless --path . --script res://tests/run_tests.gd
 ```
 
 ## Layout
-- `scripts/sim/` simulation data and rules. No nodes, no rendering, no engine physics; integer grids so it stays deterministic.
+- `scripts/sim/` simulation data and rules. No nodes, no rendering, no engine physics; integer grids so it stays deterministic. `Simulation` runs at 20 ticks/s and changes only through `SimCommand`s; randomness comes from `SimRng`.
 - `scripts/data/` loading maps from disk.
 - `scripts/render/`, `scripts/input/`, `scripts/ui/` what the player sees and touches.
 - `scenes/main.tscn` the map view.

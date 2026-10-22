@@ -13,6 +13,11 @@ extends Resource
 @export var poi_ring: Color = Color.YELLOW
 ## HQ fill per GameMap.Side.
 @export var hq_colors: Array[Color] = [Color.CYAN, Color.RED]
+## Unit fill per GameMap.Side.
+@export var unit_colors: Array[Color] = [Color.CYAN, Color.RED]
+@export var unit_outline: Color = Color.BLACK
+@export var selection: Color = Color.WHITE
+@export var order_marker: Color = Color.GREEN
 
 
 static func dev() -> StylePack:
@@ -36,6 +41,10 @@ static func dev() -> StylePack:
 	s.grid = Color(0, 0, 0, 0.18)
 	s.poi_ring = Color("f2d04a")
 	s.hq_colors = [Color("58b4e8"), Color("e8605a")]
+	s.unit_colors = [Color("3d8fd6"), Color("d6473d")]
+	s.unit_outline = Color("10140e")
+	s.selection = Color("f4f8ea")
+	s.order_marker = Color("9cf06a")
 	return s
 
 
