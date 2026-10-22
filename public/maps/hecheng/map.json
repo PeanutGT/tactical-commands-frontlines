@@ -1,0 +1,14 @@
+{
+  "id": "hecheng",
+  "name": "河城",
+  "files": { "terrain": "terrain.png", "height": "height.png" },
+  "size": { "w": 128, "h": 128 },
+  "metersPerCell": 20,
+  "weightCap": 30,
+  "deckSize": 8,
+  "handSize": 4,
+  "startSupply": 5,
+  "supplyCap": 10,
+  "victoryPoints": 300,
+  "timeLimitSec": 900
+}
