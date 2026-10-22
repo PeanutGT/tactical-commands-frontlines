@@ -1,12 +1,22 @@
 # Tactical Commands: Frontlines
 
-Web RTS card game (TypeScript + Phaser 3 + Vite). Design: `docs/TCF_交接摘要.md`.
+PC RTS card game built with Godot 4 (GDScript). Design: `docs/TCF_交接摘要.md`.
 
+## Run
+1. Install Godot 4.7 (standard build, not .NET): https://godotengine.org/download
+2. Open Godot, Import, pick `project.godot` in this folder, then press F5.
+
+## Test
 ```sh
-npm install
-npm run dev      # http://localhost:5173 (also reachable from a phone on the same network)
-npm test
-npm run build
+godot --headless --path . --import
+godot --headless --path . --script res://tests/run_tests.gd
 ```
 
-Maps live in `public/maps/<id>/`: `terrain.png` (1 px = 1 cell), `height.png` (4 grey levels), `map.json`.
+## Layout
+- `scripts/sim/` simulation data and rules. No nodes, no rendering, no engine physics; integer grids so it stays deterministic.
+- `scripts/data/` loading maps from disk.
+- `scripts/render/`, `scripts/input/`, `scripts/ui/` what the player sees and touches.
+- `scenes/main.tscn` the map view.
+- `maps/<id>/` `terrain.png` (1 px = 1 cell), `height.png` (4 grey levels), `map.json`. Map PNGs must be imported as **Image** (Import dock, Import As: Image).
+
+The earlier TypeScript + Phaser version was removed; it is in git history up to commit `5777bc0`.

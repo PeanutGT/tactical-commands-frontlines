@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://cmb5j6rd3oda6"
+path="res://.godot/imported/terrain.png-192926708272a751ff78dd06709da78b.image"
+
+[deps]
+
+source_file="res://maps/hecheng/terrain.png"
+dest_files=["res://.godot/imported/terrain.png-192926708272a751ff78dd06709da78b.image"]
+
+[params]
+
