@@ -62,6 +62,9 @@ const BOARD_RANGE_CELLS: float = 1.2
 const UNLOAD_TICKS: int = 2 * TICK_RATE
 const WRECKED_CARRIER_LOSS: float = 0.5
 
+## Line-of-fire samples per cell of distance.
+const LOS_SAMPLES: int = 4
+
 ## Why a DEPLOY was refused.
 enum Deploy { OK, NOT_IN_HAND, NO_SUPPLY, OVER_WEIGHT, BAD_PLACE }
 
@@ -204,6 +207,31 @@ func range_cells(u: SimUnit, t: SimUnit) -> float:
 func in_range(u: SimUnit, t: SimUnit) -> bool:
 	var r: float = range_cells(u, t) * SUBCELL
 	return float((t.pos - u.pos).length_squared()) <= r * r
+
+
+## In range with a clear line of fire.
+func can_hit(u: SimUnit, t: SimUnit) -> bool:
+	return in_range(u, t) and line_of_fire(u, t)
+
+
+## Direct fire cannot pass through buildings or HQs; the cells the two units
+## stand on do not count. Indirect weapons lob over them.
+func line_of_fire(u: SimUnit, t: SimUnit) -> bool:
+	if u.type.weapon != null and u.type.weapon.indirect:
+		return true
+	var a: Vector2 = Vector2(u.pos) / SUBCELL
+	var d: Vector2 = Vector2(t.pos) / SUBCELL - a
+	var n: int = ceili(d.length() * LOS_SAMPLES)
+	var from_cell: Vector2i = u.cell()
+	var to_cell: Vector2i = t.cell()
+	for k: int in range(1, n):
+		var c: Vector2i = Vector2i((a + d * (float(k) / n)).floor())
+		if c == from_cell or c == to_cell:
+			continue
+		var tt: int = map.terrain_at(c)
+		if tt == Terrain.Type.BUILDING or tt == Terrain.Type.HQ:
+			return false
+	return true
 
 
 ## Share of `u`'s shots that get through `t`'s armour, 0..1.
@@ -579,6 +607,8 @@ func _drop_target(u: SimUnit) -> void:
 
 
 func _path_to(u: SimUnit, dest: Vector2i) -> void:
+	if not Movement.passable(map, u.cell(), u.type.vehicle):
+		_unstick(u)
 	var from: Vector2i = u.cell()
 	u.path = Movement.smooth(map, from, _pathfinder.find_path(from, dest, u.type.vehicle), u.type.vehicle)
 	u.path_index = 0
@@ -644,7 +674,7 @@ func _update_chase(u: SimUnit) -> void:
 		_drop_target(u)
 		u.clear_path()
 		return
-	if in_range(u, t):
+	if can_hit(u, t):
 		u.clear_path()
 		return
 	if not u.can_move():
@@ -657,6 +687,10 @@ func _update_chase(u: SimUnit) -> void:
 
 func _move(u: SimUnit) -> void:
 	u.prev_pos = u.pos
+	if not Movement.passable(map, u.cell(), u.type.vehicle):
+		_unstick(u)
+		if u.is_moving():
+			_path_to(u, u.destination())
 	if not u.is_moving():
 		return
 	var base: float = u.type.speed_mps * _subcells_per_tick_per_mps
@@ -666,8 +700,17 @@ func _move(u: SimUnit) -> void:
 		base *= SUPPRESSED_SPEED
 	# Distance left this tick, as a fraction of a full tick at the current speed.
 	var time_left: float = 1.0
+	var replanned: bool = false
 	while time_left > 0.0 and u.is_moving():
 		var target: Vector2i = cell_center(u.path[u.path_index])
+		# Pushed off its path, a straight walk to the next waypoint can clip a
+		# building corner: go back to the middle of the current cell and
+		# re-plan from there instead.
+		if not replanned and not _straight_ok(u, target):
+			replanned = true
+			_path_to(u, u.destination())
+			u.path.insert(0, u.cell())
+			continue
 		var d: Vector2 = Vector2(target - u.pos)
 		var dist: float = d.length()
 		if dist == 0.0:
@@ -688,6 +731,33 @@ func _move(u: SimUnit) -> void:
 			time_left = 0.0
 	if not u.is_moving():
 		u.clear_path()
+
+
+## Whether `u` can walk in a straight line from where it stands to `target`
+## (sub-cells) without stepping onto ground it cannot cross.
+func _straight_ok(u: SimUnit, target: Vector2i) -> bool:
+	var a: Vector2 = Vector2(u.pos) / SUBCELL
+	var d: Vector2 = Vector2(target) / SUBCELL - a
+	var n: int = ceili(d.length() * Movement.LEG_SAMPLES)
+	var prev: Vector2i = u.cell()
+	for k: int in range(1, n + 1):
+		var c: Vector2i = Vector2i((a + d * (float(k) / n)).floor())
+		if c == prev:
+			continue
+		if not Movement.can_step(map, prev, c, u.type.vehicle):
+			return false
+		prev = c
+	return true
+
+
+## A unit that somehow stands on ground it cannot cross is put on the
+## nearest cell it can, so it never gets stuck there.
+func _unstick(u: SimUnit) -> void:
+	for off: Vector2i in slot_offsets(24):
+		var c: Vector2i = u.cell() + off
+		if Movement.passable(map, c, u.type.vehicle):
+			u.pos = cell_center(c)
+			return
 
 
 ## Whether moving from `pos` along `dir` climbs a ramp: the cell half a cell
@@ -796,19 +866,19 @@ func _fire() -> void:
 func _current_target(u: SimUnit) -> SimUnit:
 	if u.forced_target:
 		var f: SimUnit = unit(u.target_id)
-		return f if f != null and f.is_alive() and f.on_map() and in_range(u, f) and u.type.weapon.may_target(f.type.kind) else null
+		return f if f != null and f.is_alive() and f.on_map() and can_hit(u, f) and u.type.weapon.may_target(f.type.kind) else null
 	if u.is_moving():
 		u.target_id = 0
 		return null
 	var cur: SimUnit = unit(u.target_id)
-	if cur != null and cur.is_alive() and cur.on_map() and in_range(u, cur):
+	if cur != null and cur.is_alive() and cur.on_map() and can_hit(u, cur):
 		return cur
 	u.target_id = 0
 	var best: SimUnit = null
 	var best_mult: float = 0.0
 	var best_d: int = 0
 	for t: SimUnit in units:
-		if t.side == u.side or not t.is_alive() or not t.on_map() or not u.type.weapon.may_target(t.type.kind) or not in_range(u, t):
+		if t.side == u.side or not t.is_alive() or not t.on_map() or not u.type.weapon.may_target(t.type.kind) or not can_hit(u, t):
 			continue
 		# Shots that cannot get through the armour are not worth firing.
 		var m: float = pen_factor(u, t)
