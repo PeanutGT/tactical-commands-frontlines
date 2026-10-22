@@ -19,9 +19,9 @@ var path_index: int = 0
 var hp: float = 0.0
 ## Organization (組織度): drops under fire, recovers when left alone.
 var org: float = 0.0
-## At 0 organization the unit is pinned: no orders, no moving, no firing,
-## until it rallies.
-var pinned: bool = false
+## At 0 organization the unit routs: it walks slowly away from the fight,
+## takes no orders and does not fire until it rallies.
+var routing: bool = false
 ## Last tick the unit lost organization to fire, -1 for never.
 var last_hit_tick: int = -1
 ## Ticks until the weapon can fire again.
@@ -67,9 +67,9 @@ func is_held() -> bool:
 	return hold == Hold.HELD or hold == Hold.LEAVING
 
 
-## Held, pinned units and units digging in or out cannot move.
+## Held units and units digging in or out cannot move.
 func can_move() -> bool:
-	return hold == Hold.NONE and not pinned
+	return hold == Hold.NONE
 
 
 ## Below half organization: fires and moves slower.
@@ -79,3 +79,8 @@ func is_suppressed() -> bool:
 
 func figures() -> int:
 	return type.figures_at(hp)
+
+
+## Share of full firepower left: one figure's worth per surviving figure.
+func strength() -> float:
+	return float(figures()) / float(type.figures)

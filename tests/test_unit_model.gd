@@ -146,29 +146,55 @@ func test_suppressed_unit_reloads_slower() -> void:
 	check(_near(_lost(t), 20.0), "second shot at 1.5 s, lost %f" % _lost(t))
 
 
-func test_zero_organization_pins_until_rally() -> void:
-	var sim: Simulation = _sim(["............"])
-	sim.spawn(UnitType.infantry(), E, Vector2i(5, 0))
-	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
-	u.org = 10.0
+func test_zero_organization_routs_until_rally() -> void:
+	var sim: Simulation = _sim(["...................."])
+	var shooter: SimUnit = sim.spawn(UnitType.infantry(), E, Vector2i(5, 0))
+	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(2, 0))
+	u.org = 5.0
+	u.hold = SimUnit.Hold.HELD
 	sim.step()
-	check(u.pinned and u.org == 0.0, "pinned at 0")
-	# Take the shooter away so the pinned unit can recover.
-	sim.units[0].hp = 0.0
-	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(11, 0)))
-	sim.step()
-	check(not u.is_moving(), "pinned unit ignores orders")
+	check(u.routing and u.org == 0.0, "routs at 0")
+	check(u.hold == SimUnit.Hold.NONE, "leaves its position at once")
+	check(u.is_moving() and u.destination().x < 2, "heads away from the shooter, to %s" % u.destination())
+	# Take the shooter away so the routing unit can recover.
+	shooter.hp = 0.0
+	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(19, 0)))
+	var start: Vector2i = u.pos
+	_run(sim, Simulation.TICK_RATE)
+	check(u.destination().x < 2, "ignores orders")
 	check_eq(sim.shots.size(), 0, "and does not fire")
-	# 4 s before recovery starts, then 3/s up to 30.
+	var walked: float = float(start.x - u.pos.x) / Simulation.SUBCELL
+	check(absf(walked - 0.75) < 0.05, "half speed, %f cells in 1 s" % walked)
+	# 4 s before recovery starts, then 3/s (no moving penalty) up to 30.
 	var rallied_at: int = -1
 	for i: int in 20 * Simulation.TICK_RATE:
 		sim.step()
-		if not u.pinned:
+		if not u.routing:
 			rallied_at = sim.tick
 			break
-	check(rallied_at > 0, "rallies")
-	check(absi(rallied_at - (1 + 4 * Simulation.TICK_RATE + 10 * Simulation.TICK_RATE)) <= 2, "after about 14 s, tick %d" % rallied_at)
-	check(_near(u.org, 30.0) or u.org > 30.0, "at 30%% organization")
+	check(absi(rallied_at - (1 + 4 * Simulation.TICK_RATE + 10 * Simulation.TICK_RATE)) <= 2, "rallies after about 14 s, tick %d" % rallied_at)
+	check(not u.is_moving(), "and stops where it is")
+
+
+func test_routing_unit_heads_for_its_spawn() -> void:
+	var sim: Simulation = _sim(["...................."])
+	sim.map.player_spawn = CellGroup.new()
+	sim.map.player_spawn.center = Vector2(18.0, 0.0)
+	sim.spawn(UnitType.infantry(), E, Vector2i(0, 0))
+	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(4, 0))
+	u.org = 1.0
+	sim.step()
+	check(u.routing and u.destination() == Vector2i(18, 0), "routs home, to %s" % u.destination())
+
+
+func test_firepower_follows_strength() -> void:
+	var sim: Simulation = _sim(["........"])
+	var u: SimUnit = sim.spawn(UnitType.infantry(), P, Vector2i(0, 0))
+	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(4, 0))
+	u.hp = 50.0
+	sim.step()
+	check(_near(_lost(t), 10.0 * 5.0 / 9.0), "5 of 9 men fire, lost %f" % _lost(t))
+	check(_near(t.org, 100.0 - 15.0 * 5.0 / 9.0), "and suppress, org %f" % t.org)
 
 
 func test_recovery_is_faster_held_in_forest() -> void:

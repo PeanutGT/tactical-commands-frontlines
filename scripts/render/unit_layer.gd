@@ -6,23 +6,23 @@ extends Node2D
 ## ticks, plus health and organization bars, hold-position brackets, tracers,
 ## blasts and wrecks.
 
-const INFANTRY_RADIUS: float = 0.32  # cells, footprint
-const VEHICLE_SIZE: Vector2 = Vector2(0.95, 0.6)  # cells, footprint length × width
-const SOLDIER_RADIUS: float = 0.075  # cells
-const SOLDIER_SPACING: float = 0.18  # cells
-const FIGURE_VEHICLE: Vector2 = Vector2(0.28, 0.17)  # cells, length × width
-const FIGURE_VEHICLE_SPACING: Vector2 = Vector2(0.24, 0.34)  # cells, across × along
+const INFANTRY_RADIUS: float = 0.44  # cells, footprint
+const VEHICLE_SIZE: Vector2 = Vector2(1.3, 0.82)  # cells, footprint length × width
+const SOLDIER_RADIUS: float = 0.1  # cells
+const SOLDIER_SPACING: float = 0.24  # cells
+const FIGURE_VEHICLE: Vector2 = Vector2(0.38, 0.23)  # cells, length × width
+const FIGURE_VEHICLE_SPACING: Vector2 = Vector2(0.33, 0.46)  # cells, across × along
 const FOOTPRINT_ALPHA: float = 0.28
 const TRACER_SEC: float = 0.12
 const BLAST_SEC: float = 0.4
 const WRECK_SEC: float = 1.5
-const HP_BAR: Vector2 = Vector2(0.8, 0.12)  # cells
+const HP_BAR: Vector2 = Vector2(1.0, 0.13)  # cells
 const HP_GOOD: Color = Color("7be05a")
 const HP_LOW: Color = Color("f0b43c")
 const HP_BG: Color = Color(0, 0, 0, 0.6)
 const ORG_GOOD: Color = Color("5ab4f0")
 const ORG_SUPPRESSED: Color = Color("f08c3c")
-const ORG_PINNED: Color = Color("e04848")
+const ORG_ROUTING: Color = Color("e04848")
 const BLAST_COLOR: Color = Color("ffb04a")
 
 var sim: Simulation
@@ -135,8 +135,8 @@ func _draw() -> void:
 ## Corner brackets around a unit holding position; faint while digging in or out.
 func _draw_hold(u: SimUnit, p: Vector2, s: float) -> void:
 	var c: Color = _style.unit_outline if u.hold == SimUnit.Hold.HELD else Color(_style.unit_outline, 0.4)
-	var h: float = 0.45 * s
-	var l: float = 0.18 * s
+	var h: float = 0.6 * s
+	var l: float = 0.22 * s
 	for corner: Vector2 in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
 		var q: Vector2 = p + corner * h
 		draw_line(q, q - Vector2(corner.x * l, 0.0), c, 2.0)
@@ -177,20 +177,20 @@ static func figure_offsets(n: int, per_row: int, spacing: Vector2) -> Array[Vect
 
 
 ## Health bar with the organization bar under it; organization turns orange
-## when suppressed and red when pinned.
+## when suppressed and red with a frame when routing.
 func _draw_bars(u: SimUnit, p: Vector2, s: float) -> void:
 	var size: Vector2 = HP_BAR * s
-	var top: Vector2 = p + Vector2(-size.x * 0.5, -0.66 * s)
+	var top: Vector2 = p + Vector2(-size.x * 0.5, -0.9 * s)
 	var f: float = clampf(u.hp / u.type.max_hp, 0.0, 1.0)
 	draw_rect(Rect2(top, size), HP_BG)
 	draw_rect(Rect2(top, Vector2(size.x * f, size.y)), HP_GOOD if f > 0.4 else HP_LOW)
 	var otop: Vector2 = top + Vector2(0.0, size.y + 1.0)
 	var o: float = clampf(u.org / u.type.max_org, 0.0, 1.0)
-	var oc: Color = ORG_PINNED if u.pinned else (ORG_SUPPRESSED if u.is_suppressed() else ORG_GOOD)
+	var oc: Color = ORG_ROUTING if u.routing else (ORG_SUPPRESSED if u.is_suppressed() else ORG_GOOD)
 	draw_rect(Rect2(otop, size), HP_BG)
 	draw_rect(Rect2(otop, Vector2(size.x * o, size.y)), oc)
-	if u.pinned:
-		draw_rect(Rect2(otop, size), ORG_PINNED, false, 1.0)
+	if u.routing:
+		draw_rect(Rect2(otop, size), ORG_ROUTING, false, 1.0)
 
 
 func _draw_path(u: SimUnit, s: float) -> void:
