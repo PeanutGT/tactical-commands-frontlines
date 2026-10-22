@@ -9,6 +9,8 @@ extends Node2D
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
+## A short note for the player about an order (some units cannot hurt the target).
+signal order_note(text: String)
 
 ## Screen pixels the mouse must travel before a press becomes a box.
 const DRAG_THRESHOLD: float = 6.0
@@ -190,6 +192,20 @@ func _order_attack(t: SimUnit) -> void:
 	if ids.is_empty():
 		return
 	_sim.issue(SimCommand.attack(side, ids, t.id))
+	var unable: PackedStringArray = PackedStringArray()
+	for id: int in ids:
+		var u: SimUnit = _sim.unit(id)
+		if u == null or u == t:
+			continue
+		var note: String = ""
+		if u.type.weapon == null or not u.type.weapon.may_target(t.type.kind):
+			note = "%s打不了%s" % [u.type.display_name, t.type.display_name]
+		elif _sim.pen_factor(u, t) <= 0.0:
+			note = "%s打不穿%s" % [u.type.display_name, t.type.display_name]
+		if note != "" and not unable.has(note):
+			unable.append(note)
+	if not unable.is_empty():
+		order_note.emit("、".join(unable))
 	_marker_pos = _layer.world_pos(t)
 	_marker_left = MARKER_SEC
 	queue_redraw()

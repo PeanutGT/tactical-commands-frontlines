@@ -933,13 +933,16 @@ func _update_chase(u: SimUnit) -> void:
 		_drop_target(u)
 		u.clear_path()
 		return
-	if can_hit(u, t):
+	# In range is not enough: guns that reach further than they see (artillery,
+	# mortars, loitering munitions) keep closing in until their side sees it.
+	if can_hit(u, t) and vision.sees(u.side, t):
 		u.clear_path()
 		return
 	if not u.can_move():
 		return
 	var c: Vector2i = t.cell()
-	if c != u.chase_cell and (not u.is_moving() or (tick + u.id) % CHASE_REPATH_TICKS == 0):
+	var due: bool = (tick + u.id) % CHASE_REPATH_TICKS == 0
+	if (c != u.chase_cell and (not u.is_moving() or due)) or (not u.is_moving() and due):
 		u.chase_cell = c
 		_path_to(u, c)
 
