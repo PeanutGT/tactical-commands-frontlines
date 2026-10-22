@@ -1,5 +1,5 @@
-node_modules/
-dist/
+.godot/
 *.log
 .DS_Store
 .claude/
+/build/
