@@ -172,7 +172,8 @@ func _init(p_map: GameMap, seed_value: int = 1) -> void:
 
 
 ## Each side starts holding the map's start_points points nearest its spawn
-## zone (河城: its rear high ground and its bridgehead square).
+## zone (河城: its rear high ground and its bridgehead square), each with an
+## infantry squad on it.
 func _claim_start_points() -> void:
 	for side: int in 2:
 		var home: CellGroup = _spawn_zone(side)
@@ -192,6 +193,11 @@ func _claim_start_points() -> void:
 			if poi_owner[i] == CellGroup.NO_OWNER:
 				poi_owner[i] = side
 				claimed += 1
+				# Each starting point comes with an infantry squad on it (Peanut,
+				# 2026-10-23). It has no card, so it never cools down or refunds.
+				var c: Vector2i = Vector2i(map.pois[i].center.floor())
+				if Movement.passable(map, c, false):
+					spawn(UnitType.infantry(), side, c)
 
 
 ## Shuffles `deck` (from the seeded PRNG) and deals `side` its opening hand

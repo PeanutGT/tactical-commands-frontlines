@@ -2,8 +2,9 @@ class_name HandBar
 extends Control
 ## Bottom-of-screen hand (section 7): one card per hand slot, with supply,
 ## field weight, the draw pile and cooling cards above it. Press a card and
-## drag it onto the map to play it; right-click or drop it back on the bar to
-## cancel. Reads the simulation, never changes it.
+## drag it onto the map to play it, or press 1-4 to pick a card up and click
+## the map; right-click or drop it back on the bar to cancel. Reads the
+## simulation, never changes it.
 
 signal card_dropped(slot: int, card: StringName, screen_pos: Vector2)
 ## `card` is SideState.EMPTY when the drag ends.
@@ -160,15 +161,40 @@ func _on_card_input(event: InputEvent, slot: int) -> void:
 	var mb: InputEventMouseButton = event as InputEventMouseButton
 	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
+	if _pick_up(slot):
+		accept_event()
+
+
+## Starts carrying the card in `slot`; false when there is none to carry.
+func _pick_up(slot: int) -> bool:
+	if _sim == null or slot >= _sim.sides[side].hand.size():
+		return false
 	var id: StringName = _sim.sides[side].hand[slot]
 	if id == SideState.EMPTY or _sim.winner != Simulation.NO_WINNER:
-		return
+		return false
 	dragging_slot = slot
 	_drag_card = id
 	_ghost.text = Card.display_name(id)
 	_ghost.visible = true
-	accept_event()
 	drag_changed.emit(id)
+	return true
+
+
+## 1-4 pick up the card in that hand slot (pressing it again puts it down).
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key: InputEventKey = event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	var slot: int = key.physical_keycode - KEY_1
+	if slot < 0 or slot > 8:
+		return
+	if slot == dragging_slot:
+		_end_drag()
+	elif _pick_up(slot):
+		pass
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 ## Runs before the map's own input, so a drag's release never selects units.
@@ -180,6 +206,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
 		_end_drag()
+	elif mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+		pass  # a card picked up with 1-4 is played on release; keep the press off the map
 	elif mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
 		var slot: int = dragging_slot
 		var card: StringName = _drag_card

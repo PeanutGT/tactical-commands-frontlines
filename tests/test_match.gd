@@ -137,3 +137,15 @@ func test_hecheng_start_points() -> void:
 	check_eq(mine, [1.0, 3.0] as Array[float], "player: the square (1) and the high ground (3)")
 	check_eq(sim.points_held(E), 2, "enemy: two as well")
 	check_eq(sim.map.config.weight_cap, 40, "weight cap 40")
+
+
+func test_starting_points_come_with_infantry() -> void:
+	var sim: Simulation = _sim(1)
+	var squads: Array[int] = [0, 0]
+	for u: SimUnit in sim.units:
+		if u.type.id == &"infantry":
+			squads[u.side] += 1
+			check(Vector2(u.pos).distance_to(sim.map.pois[u.side].center * Simulation.SUBCELL) < Simulation.SUBCELL,
+				"squad %d stands on its side's point" % u.id)
+			check_eq(u.card, &"", "no card behind it")
+	check_eq(squads, [1, 1] as Array[int], "one squad per starting point")
