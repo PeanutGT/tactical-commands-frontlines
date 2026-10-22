@@ -1,11 +1,18 @@
 class_name UnitLayer
 extends Node2D
-## Draws units as dev-style shapes (infantry = circle, vehicle = box pointing
-## where it drives), interpolating between the last two simulation ticks, plus
-## health bars, hold-position brackets, tracers, blasts and wrecks.
+## Draws each formation as dev-style figures (soldiers = dots, vehicles =
+## boxes pointing where it drives) on a faint footprint, one figure per
+## surviving soldier or vehicle, interpolating between the last two simulation
+## ticks, plus health and organization bars, hold-position brackets, tracers,
+## blasts and wrecks.
 
-const INFANTRY_RADIUS: float = 0.32  # cells
-const VEHICLE_SIZE: Vector2 = Vector2(0.95, 0.6)  # cells, length × width
+const INFANTRY_RADIUS: float = 0.32  # cells, footprint
+const VEHICLE_SIZE: Vector2 = Vector2(0.95, 0.6)  # cells, footprint length × width
+const SOLDIER_RADIUS: float = 0.075  # cells
+const SOLDIER_SPACING: float = 0.18  # cells
+const FIGURE_VEHICLE: Vector2 = Vector2(0.28, 0.17)  # cells, length × width
+const FIGURE_VEHICLE_SPACING: Vector2 = Vector2(0.24, 0.34)  # cells, across × along
+const FOOTPRINT_ALPHA: float = 0.28
 const TRACER_SEC: float = 0.12
 const BLAST_SEC: float = 0.4
 const WRECK_SEC: float = 1.5
@@ -13,6 +20,9 @@ const HP_BAR: Vector2 = Vector2(0.8, 0.12)  # cells
 const HP_GOOD: Color = Color("7be05a")
 const HP_LOW: Color = Color("f0b43c")
 const HP_BG: Color = Color(0, 0, 0, 0.6)
+const ORG_GOOD: Color = Color("5ab4f0")
+const ORG_SUPPRESSED: Color = Color("f08c3c")
+const ORG_PINNED: Color = Color("e04848")
 const BLAST_COLOR: Color = Color("ffb04a")
 
 var sim: Simulation
@@ -96,25 +106,18 @@ func _draw() -> void:
 				_heading[u.id] = moved.angle()
 			draw_set_transform(p, _heading.get(u.id, 0.0))
 			var size: Vector2 = VEHICLE_SIZE * s
-			var body: Rect2 = Rect2(-size * 0.5, size)
-			draw_rect(body, fill)
-			draw_rect(body, _style.unit_outline, false, 1.5)
-			# Nose mark shows the driving direction.
-			draw_line(Vector2(size.x * 0.1, 0.0), Vector2(size.x * 0.5, 0.0), _style.unit_outline, 2.0)
-			if u.type.id == &"tank":
-				draw_circle(Vector2.ZERO, size.y * 0.3, _style.unit_outline, false, 1.5)
-			elif u.type.id == &"mortar":
-				draw_circle(Vector2.ZERO, size.y * 0.22, _style.unit_outline)
+			draw_rect(Rect2(-size * 0.5, size), Color(fill, FOOTPRINT_ALPHA))
+			_draw_vehicles(u.figures(), fill, s)
 			draw_set_transform(Vector2.ZERO)
 		else:
-			draw_circle(p, INFANTRY_RADIUS * s, fill)
-			draw_circle(p, INFANTRY_RADIUS * s, _style.unit_outline, false, 1.5)
+			draw_circle(p, INFANTRY_RADIUS * s, Color(fill, FOOTPRINT_ALPHA))
+			_draw_soldiers(u.figures(), p, fill, s)
 		if u.hold != SimUnit.Hold.NONE:
 			_draw_hold(u, p, s)
 		if selected.has(u.id):
 			draw_arc(p, pick_radius(u) + 3.0, 0.0, TAU, 24, _style.selection, 1.5, true)
-		if selected.has(u.id) or u.hp < u.type.max_hp:
-			_draw_hp(u, p, s)
+		if selected.has(u.id) or u.hp < u.type.max_hp or u.org < u.type.max_org:
+			_draw_bars(u, p, s)
 	for e: Array in _shots:
 		if e[2] > 0.0:
 			var a: float = e[3] / BLAST_SEC
@@ -140,12 +143,54 @@ func _draw_hold(u: SimUnit, p: Vector2, s: float) -> void:
 		draw_line(q, q - Vector2(0.0, corner.y * l), c, 2.0)
 
 
-func _draw_hp(u: SimUnit, p: Vector2, s: float) -> void:
+## Soldiers in rows of up to four, centred on `p`; the last ones go first.
+func _draw_soldiers(n: int, p: Vector2, fill: Color, s: float) -> void:
+	for pos: Vector2 in figure_offsets(n, 4, Vector2(SOLDIER_SPACING, SOLDIER_SPACING)):
+		draw_circle(p + pos * s, SOLDIER_RADIUS * s, fill)
+		draw_circle(p + pos * s, SOLDIER_RADIUS * s, _style.unit_outline, false, -1.0)
+
+
+## Vehicles in columns of two along the driving direction (drawn in the
+## unit's rotated frame).
+func _draw_vehicles(n: int, fill: Color, s: float) -> void:
+	var size: Vector2 = FIGURE_VEHICLE * s
+	for off: Vector2 in figure_offsets(n, 2, FIGURE_VEHICLE_SPACING):
+		# Rows run across the footprint, so swap axes: columns go nose to tail.
+		var c: Vector2 = Vector2(-off.y, off.x) * s
+		var body: Rect2 = Rect2(c - size * 0.5, size)
+		draw_rect(body, fill)
+		draw_rect(body, _style.unit_outline, false, -1.0)
+		draw_line(c + Vector2(size.x * 0.1, 0.0), c + Vector2(size.x * 0.5, 0.0), _style.unit_outline, -1.0)
+
+
+## Offsets in cells for `n` figures laid out in rows of up to `per_row`,
+## the whole block centred on zero.
+static func figure_offsets(n: int, per_row: int, spacing: Vector2) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	var rows: int = ceili(float(n) / per_row)
+	for i: int in n:
+		var row: int = i / per_row
+		var in_row: int = mini(per_row, n - row * per_row)
+		var col: int = i % per_row
+		out.append(Vector2((col - (in_row - 1) * 0.5) * spacing.x, (row - (rows - 1) * 0.5) * spacing.y))
+	return out
+
+
+## Health bar with the organization bar under it; organization turns orange
+## when suppressed and red when pinned.
+func _draw_bars(u: SimUnit, p: Vector2, s: float) -> void:
 	var size: Vector2 = HP_BAR * s
-	var top: Vector2 = p + Vector2(-size.x * 0.5, -0.62 * s)
+	var top: Vector2 = p + Vector2(-size.x * 0.5, -0.66 * s)
 	var f: float = clampf(u.hp / u.type.max_hp, 0.0, 1.0)
 	draw_rect(Rect2(top, size), HP_BG)
 	draw_rect(Rect2(top, Vector2(size.x * f, size.y)), HP_GOOD if f > 0.4 else HP_LOW)
+	var otop: Vector2 = top + Vector2(0.0, size.y + 1.0)
+	var o: float = clampf(u.org / u.type.max_org, 0.0, 1.0)
+	var oc: Color = ORG_PINNED if u.pinned else (ORG_SUPPRESSED if u.is_suppressed() else ORG_GOOD)
+	draw_rect(Rect2(otop, size), HP_BG)
+	draw_rect(Rect2(otop, Vector2(size.x * o, size.y)), oc)
+	if u.pinned:
+		draw_rect(Rect2(otop, size), ORG_PINNED, false, 1.0)
 
 
 func _draw_path(u: SimUnit, s: float) -> void:

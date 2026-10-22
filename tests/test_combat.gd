@@ -63,19 +63,13 @@ func test_no_friendly_auto_target() -> void:
 	check_eq(_lost(f), 0.0, "friend untouched")
 
 
-func test_class_multipliers() -> void:
-	var sim: Simulation = _sim(["..........", "..........", ".........."])
+func test_tank_gun_hits_infantry_in_full() -> void:
+	# No class multipliers any more: unarmoured targets take full damage.
+	var sim: Simulation = _sim(["......"])
 	sim.spawn(UnitType.tank(), P, Vector2i(0, 0))
 	var inf: SimUnit = sim.spawn(_dummy(UnitType.Kind.INFANTRY), E, Vector2i(4, 0))
-	var arm: SimUnit = sim.spawn(_dummy(UnitType.Kind.ARMOR), E, Vector2i(6, 2))
 	sim.step()
-	check(_near(_lost(arm), 50.0), "tank prefers armour and hits for 100%%, lost %f" % _lost(arm))
-	check_eq(_lost(inf), 0.0, "infantry not shot first")
-	var sim2: Simulation = _sim(["......"])
-	sim2.spawn(UnitType.tank(), P, Vector2i(0, 0))
-	var inf2: SimUnit = sim2.spawn(_dummy(UnitType.Kind.INFANTRY), E, Vector2i(4, 0))
-	sim2.step()
-	check(_near(_lost(inf2), 20.0), "tank vs infantry 40%%, lost %f" % _lost(inf2))
+	check(_near(_lost(inf), 50.0), "tank vs infantry, lost %f" % _lost(inf))
 
 
 func test_high_ground_damage_and_range() -> void:
@@ -174,7 +168,7 @@ func test_area_weapon_friendly_fire_and_penalty() -> void:
 	check_eq(sim.shots.size() + _lost(t), 0.0, "mortar will not auto-fire with a friend in the blast")
 	sim.issue(SimCommand.attack(P, PackedInt32Array([m.id]), t.id))
 	sim.step()
-	check(_near(_lost(t), 20.0), "40 × 50%% vs armour, lost %f" % _lost(t))
+	check(_near(_lost(t), 40.0), "unarmoured dummy takes the full 40, lost %f" % _lost(t))
 	check(_near(_lost(f), 40.0), "friend in the blast hit too, lost %f" % _lost(f))
 	check_eq(sim.score[P], 100, "no penalty under 100 damage")
 	_run(sim, 80)

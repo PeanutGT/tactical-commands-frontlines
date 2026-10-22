@@ -17,8 +17,17 @@ var prev_pos: Vector2i = Vector2i.ZERO
 var path: Array[Vector2i] = []
 var path_index: int = 0
 var hp: float = 0.0
+## Organization (組織度): drops under fire, recovers when left alone.
+var org: float = 0.0
+## At 0 organization the unit is pinned: no orders, no moving, no firing,
+## until it rallies.
+var pinned: bool = false
+## Last tick the unit lost organization to fire, -1 for never.
+var last_hit_tick: int = -1
 ## Ticks until the weapon can fire again.
 var cooldown: int = 0
+## Shots left in the current volley.
+var burst_left: int = 0
 ## Unit currently shot at, 0 for none.
 var target_id: int = 0
 ## Set by a force-attack order: chase and shoot this unit until it dies.
@@ -58,6 +67,15 @@ func is_held() -> bool:
 	return hold == Hold.HELD or hold == Hold.LEAVING
 
 
-## Held units and units digging in or out cannot move.
+## Held, pinned units and units digging in or out cannot move.
 func can_move() -> bool:
-	return hold == Hold.NONE
+	return hold == Hold.NONE and not pinned
+
+
+## Below half organization: fires and moves slower.
+func is_suppressed() -> bool:
+	return org < type.max_org * Simulation.SUPPRESSED_BELOW
+
+
+func figures() -> int:
+	return type.figures_at(hp)
