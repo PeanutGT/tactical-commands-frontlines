@@ -22,6 +22,8 @@ var targets: Targets = Targets.GROUND
 ## Blast radius around the impact; 0 means a direct hit on the target only.
 var splash_m: float = 0.0
 ## Shots per volley, `burst_interval_sec` apart (多管火箭車 fires 6).
+## Lobs shells over buildings (曲射) instead of needing a clear line of fire.
+var indirect: bool = false
 var burst: int = 1
 var burst_interval_sec: float = 0.5
 
