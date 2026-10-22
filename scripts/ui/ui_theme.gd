@@ -6,6 +6,7 @@ const TEXT: Color = Color("e8ecdf")
 const TEXT_DIM: Color = Color("9aa08f")
 const PANEL: Color = Color(0.06, 0.08, 0.05, 0.86)
 const BAD: Color = Color("f07a5a")
+const GOOD: Color = Color("9cf06a")
 ## Card border per faction.
 const FACTION_COLORS: Dictionary[StringName, Color] = {
 	&"common": Color("b8bca8"), &"alliance": Color("5aa8f0"),

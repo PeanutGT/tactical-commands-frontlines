@@ -34,14 +34,16 @@ func share(i: int) -> float:
 	return float(progress[i]) / CAPTURE_TICKS
 
 
-## Routing units and passengers neither take nor contest a point.
+## Routing units, passengers, supply trucks and buildings neither take nor
+## contest a point.
 func update(units: Array[SimUnit]) -> void:
 	var r: float = RADIUS_CELLS * Simulation.SUBCELL
 	for i: int in map.pois.size():
 		var centre: Vector2 = map.pois[i].center * Simulation.SUBCELL
 		var present: Array[bool] = [false, false]
 		for u: SimUnit in units:
-			if u.on_map() and u.is_alive() and not u.routing and Vector2(u.pos).distance_squared_to(centre) <= r * r:
+			if u.on_map() and u.is_alive() and not u.routing and not u.is_convoy() and not u.type.structure \
+					and Vector2(u.pos).distance_squared_to(centre) <= r * r:
 				present[u.side] = true
 		if present[0] and present[1]:
 			continue

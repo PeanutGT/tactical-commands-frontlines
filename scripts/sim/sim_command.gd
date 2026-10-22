@@ -6,14 +6,18 @@ extends RefCounted
 ## HOLD toggles hold position; ATTACK is a force-attack on `target_unit`.
 ## DEPLOY plays hand slot `slot` (which must still hold `card`) at `target`.
 ## LOAD sends infantry to board transport `target_unit`; UNLOAD empties the
-## given transports; RETREAT drives units home for a half refund.
-enum Kind { MOVE, STOP, ATTACK, HOLD, DEPLOY, RETREAT, LOAD, UNLOAD }
+## given transports; RETREAT drives units home for a half refund. ENGINEER
+## sets engineers to work on the bridge they stand on (demolish) or next to
+## (repair a broken one). A 運補車隊 DEPLOY also carries the cell it drives to
+## in `target2`.
+enum Kind { MOVE, STOP, ATTACK, HOLD, DEPLOY, RETREAT, LOAD, UNLOAD, ENGINEER }
 
 var kind: Kind = Kind.STOP
 var side: int = GameMap.Side.PLAYER
 var unit_ids: PackedInt32Array = PackedInt32Array()
 var target: Vector2i = Vector2i.ZERO
 var target_unit: int = 0
+var target2: Vector2i = Vector2i(-1, -1)
 var slot: int = -1
 var card: StringName = &""
 ## Tick the command runs on; set by Simulation.issue.
@@ -48,12 +52,17 @@ static func hold(p_side: int, ids: PackedInt32Array) -> SimCommand:
 	return _make(Kind.HOLD, p_side, ids)
 
 
-static func deploy(p_side: int, p_slot: int, p_card: StringName, cell: Vector2i) -> SimCommand:
+static func deploy(p_side: int, p_slot: int, p_card: StringName, cell: Vector2i, cell2: Vector2i = Vector2i(-1, -1)) -> SimCommand:
 	var c: SimCommand = _make(Kind.DEPLOY, p_side, PackedInt32Array())
 	c.slot = p_slot
 	c.card = p_card
 	c.target = cell
+	c.target2 = cell2
 	return c
+
+
+static func engineer(p_side: int, ids: PackedInt32Array) -> SimCommand:
+	return _make(Kind.ENGINEER, p_side, ids)
 
 
 static func retreat(p_side: int, ids: PackedInt32Array) -> SimCommand:

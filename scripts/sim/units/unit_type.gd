@@ -30,6 +30,9 @@ var weight: int = 1
 var weapon: Weapon = null
 ## Infantry weight it can carry (section 9 搭載), 0 for none.
 var transport_capacity: int = 0
+## A building (the HQ): never moves, routs or takes orders, and is always
+## known to both sides.
+var structure: bool = false
 
 
 func _init(p_id: StringName = &"", p_name: String = "", p_kind: Kind = Kind.INFANTRY, p_speed_mps: float = 0.0) -> void:
@@ -144,6 +147,35 @@ static func _from_row(row: Array) -> UnitType:
 		t.weapon.splash_m = MapScale.standard_cells_to_meters(w[6])
 		t.weapon.burst = w[7]
 		t.weapon.indirect = INDIRECT_FIRE.has(t.id)
+	return t
+
+
+## Section 11 總部: 2000 health and a self-defence gun (range 8, damage 30).
+## Armour, penetration, suppression and reload are starting values.
+static func hq() -> UnitType:
+	var t: UnitType = UnitType.new(&"hq", "總部", Kind.ARMOR, 0.0)
+	t.structure = true
+	t.echelon = Echelon.COMPANY
+	t.max_hp = 2000.0
+	t.max_org = 1000000.0
+	t.weight = 0
+	t.weapon = Weapon.new(30.0, MapScale.standard_cells_to_meters(8.0), 3.0, 14, 30.0)
+	return t
+
+
+## 運補車隊 truck (progress.md pacing decisions): one unarmed truck, 120
+## health, armour 1, as fast as a scout car, weighs nothing. Organization and
+## sight are starting values.
+static func supply_truck() -> UnitType:
+	var t: UnitType = UnitType.new(&"supply_truck", "運補卡車", Kind.ARMOR, MapScale.standard_cells_to_meters(3.5))
+	t.faction = &"common"
+	t.echelon = Echelon.PLATOON
+	t.figures = 1
+	t.max_hp = 120.0
+	t.armor = 1
+	t.max_org = 80.0
+	t.weight = 0
+	t.vision_m = MapScale.standard_cells_to_meters(7.0)
 	return t
 
 

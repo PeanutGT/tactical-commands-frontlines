@@ -3,14 +3,42 @@ extends RefCounted
 ## The card pool (sections 7 and 8). A card id is either a unit card
 ## (`UnitType.CARDS`) or a support card (`SUPPORT` below). Static data only.
 
-## Support cards in the pool now. The rest of section 8's support cards come
-## with their effects in M6. Columns: id, name, faction, cost.
+## Where a support card must be dropped.
+## ANYWHERE: any cell on the map. SEEN: a cell the side can see now.
+## OWN_POINT: next to a point the side holds (運補車隊 starts there).
+## ENEMY: on or next to an enemy unit the side can see, or on a bridge.
+## OWN_ARMOR: on or next to one of the side's own armoured units.
+enum Aim { ANYWHERE, SEEN, OWN_POINT, ENEMY, OWN_ARMOR }
+
+## Section 8 support cards. Air strikes, minefields and jamming wait for M7.
+## Columns: id, name, faction, cost, aim.
 const SUPPORT: Array = [
-	[&"supply_convoy", "運補車隊", &"common", 1],
+	[&"supply_convoy", "運補車隊", &"common", 1, Aim.OWN_POINT],
+	[&"smoke", "煙霧彈", &"common", 2, Aim.ANYWHERE],
+	[&"artillery", "砲擊", &"common", 4, Aim.SEEN],
+	[&"drone_recon", "無人機偵察", &"alliance", 2, Aim.ANYWHERE],
+	[&"precision_missile", "精準飛彈", &"alliance", 3, Aim.ENEMY],
+	[&"aps", "主動防護系統", &"alliance", 3, Aim.ANYWHERE],
+	[&"call_reserves", "召集預備隊", &"federation", 2, Aim.ANYWHERE],
+	[&"barrage", "彈幕射擊", &"federation", 5, Aim.SEEN],
+	[&"armored_assault", "裝甲突擊", &"armor_corps", 3, Aim.ANYWHERE],
+	[&"field_repair", "戰場維修", &"armor_corps", 2, Aim.OWN_ARMOR],
+	[&"addon_armor", "附加裝甲", &"armor_corps", 3, Aim.OWN_ARMOR],
 ]
-## 運補車隊: 4 supply after 3 s.
-const CONVOY_DELAY_SEC: float = 3.0
-const CONVOY_SUPPLY: float = 4.0
+## One-line effect per support card, for tooltips.
+const SUPPORT_TEXT: Dictionary[StringName, String] = {
+	&"supply_convoy": "派一輛卡車從己方據點開到另一個己方據點或總部，抵達才給補給：每 10 格 +1（1～6）；被打掉就沒有",
+	&"smoke": "半徑 4 格擋視線 12 秒",
+	&"artillery": "3 秒後落彈，半徑 3 格、120 傷害；要落在己方視野內",
+	&"drone_recon": "指定區域開視野 15 秒，半徑 10 格",
+	&"precision_missile": "視野內單一目標 250 傷害（也能打橋）",
+	&"aps": "半徑 6 格友軍裝甲受反裝甲傷害 −50%，10 秒",
+	&"call_reserves": "所有冷卻中的卡剩餘冷卻減半",
+	&"barrage": "4 秒後沿 12 格直線落彈，90 傷害",
+	&"armored_assault": "半徑 10 格友軍裝甲移速 +40%，10 秒",
+	&"field_repair": "指定友軍裝甲立即回 300 血",
+	&"addon_armor": "指定友軍裝甲獲得 200 護盾，打破或 30 秒後消失",
+}
 
 const FACTIONS: Array[StringName] = [&"common", &"alliance", &"federation", &"armor_corps"]
 const FACTION_NAMES: Dictionary[StringName, String] = {
@@ -54,6 +82,11 @@ static func display_name(id: StringName) -> String:
 		return UnitType.of(id).display_name
 	var row: Variant = _support_row(id)
 	return "" if row == null else row[1]
+
+
+static func aim(id: StringName) -> Aim:
+	var row: Variant = _support_row(id)
+	return Aim.ANYWHERE if row == null else row[4]
 
 
 static func faction(id: StringName) -> StringName:

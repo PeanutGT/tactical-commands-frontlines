@@ -4,7 +4,8 @@ extends Node2D
 ## Shift adds, right-click moves (or attacks the enemy under the cursor),
 ## Ctrl+right-click force-attacks any unit, right-click on an own transport
 ## boards the selected infantry, H toggles hold position, X stops, R retreats,
-## U unloads. Orders go to the simulation as
+## U unloads, B sets engineers to blow up or rebuild a bridge. HQs and supply
+## trucks cannot be selected. Orders go to the simulation as
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
@@ -103,6 +104,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				if not ids.is_empty():
 					_sim.issue(SimCommand.unload(side, ids))
 				get_viewport().set_input_as_handled()
+			KEY_B:
+				if not ids.is_empty():
+					_sim.issue(SimCommand.engineer(side, ids))
+				get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -155,6 +160,8 @@ func _unit_at(world: Vector2, of_side: int) -> SimUnit:
 
 func _select_click(world: Vector2, add: bool) -> void:
 	var best: SimUnit = _unit_at(world, side)
+	if best != null and not _selectable(best):
+		best = null
 	if not add:
 		_layer.selected.clear()
 	if best != null:
@@ -169,9 +176,13 @@ func _select_box(rect: Rect2, add: bool) -> void:
 	if not add:
 		_layer.selected.clear()
 	for u: SimUnit in _sim.units:
-		if u.side == side and u.on_map() and rect.has_point(_layer.world_pos(u)):
+		if u.side == side and _selectable(u) and rect.has_point(_layer.world_pos(u)):
 			_layer.selected[u.id] = true
 	selection_changed.emit(_layer.selected.size())
+
+
+func _selectable(u: SimUnit) -> bool:
+	return u.on_map() and not u.type.structure and not u.is_convoy()
 
 
 func _order_attack(t: SimUnit) -> void:

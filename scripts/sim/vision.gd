@@ -22,6 +22,8 @@ const HIGH_GROUND_LEVELS: int = 2
 const VISION_SCALE: float = 1.5
 ## Each HQ watches this far around its centre for its side (starting value).
 const HQ_SIGHT_CELLS: float = 16.0
+## A held point watches this far around its centre for its holder (starting value).
+const POINT_SIGHT_CELLS: float = 10.0
 ## The ground never changes, so what a cell sees is worked out once per sight
 ## radius and kept; the cache starts over past this many views.
 const MAX_CACHED_VIEWS: int = 4096
@@ -33,6 +35,13 @@ var fog: Array[PackedByteArray] = []
 var seen: Array[Dictionary] = [{}, {}]
 ## Bumped on every recompute, so the view knows when to redraw.
 var revision: int = 0
+## 煙霧彈 clouds over each cell (count), and the clouds as Vector3(x, y, radius)
+## in cells. Smoke stops sight like forest and hides units inside it.
+var smoke: PackedByteArray = PackedByteArray()
+var smoke_zones: Array[Vector3] = []
+## 無人機偵察 per side: Vector3(x, y, radius) in cells. A drone looks down,
+## so it sees every cell in its circle; forest and smoke still hide units.
+var drones: Array[Array] = [[], []]
 
 ## Cells lit by the last recompute, per side, to dim them on the next one.
 var _lit: Array[PackedInt32Array] = [PackedInt32Array(), PackedInt32Array()]
@@ -60,6 +69,7 @@ func _init(p_map: GameMap) -> void:
 	_stamp.fill(0)
 	_trace_mark.resize(n)
 	_trace_mark.fill(0)
+	smoke.resize(n)
 
 
 func fog_at(side: int, cell: Vector2i) -> Fog:
@@ -70,9 +80,45 @@ func cell_visible(side: int, cell: Vector2i) -> bool:
 	return fog[side][map.index_of(cell)] == Fog.VISIBLE
 
 
-## Own units are always known; enemies only while someone has eyes on them.
+## Own units and buildings are always known; enemies only while someone has
+## eyes on them.
 func sees(side: int, u: SimUnit) -> bool:
-	return u.side == side or seen[side].has(u.id)
+	return u.side == side or u.type.structure or seen[side].has(u.id)
+
+
+func add_smoke(centre: Vector2, r: float) -> void:
+	smoke_zones.append(Vector3(centre.x, centre.y, r))
+	for i: int in _disc(centre, r):
+		smoke[i] += 1
+
+
+func remove_smoke(centre: Vector2, r: float) -> void:
+	smoke_zones.erase(Vector3(centre.x, centre.y, r))
+	for i: int in _disc(centre, r):
+		smoke[i] -= 1
+
+
+func add_drone(side: int, centre: Vector2, r: float) -> void:
+	drones[side].append(Vector3(centre.x, centre.y, r))
+
+
+func remove_drone(side: int, centre: Vector2) -> void:
+	for k: int in drones[side].size():
+		var d: Vector3 = drones[side][k]
+		if Vector2(d.x, d.y) == centre:
+			drones[side].remove_at(k)
+			return
+
+
+## Cell indices whose centres lie within `r` of `centre`.
+func _disc(centre: Vector2, r: float) -> PackedInt32Array:
+	var out: PackedInt32Array = PackedInt32Array()
+	for y: int in range(floori(centre.y - r), ceili(centre.y + r) + 1):
+		for x: int in range(floori(centre.x - r), ceili(centre.x + r) + 1):
+			var c: Vector2i = Vector2i(x, y)
+			if map.in_bounds(c) and (Vector2(c) + Vector2(0.5, 0.5)).distance_to(centre) <= r:
+				out.append(map.index_of(c))
+	return out
 
 
 ## Sight radius of `u` in cells on this map, high ground included.
@@ -82,8 +128,9 @@ func sight_cells(u: SimUnit) -> float:
 	return MapScale.meters_to_cells(u.type.vision_m * VISION_SCALE + bonus_m, mpc)
 
 
-## Rebuilds both sides' views from the units on the map.
-func update(units: Array[SimUnit]) -> void:
+## Rebuilds both sides' views from the units on the map, the HQs, the points
+## each side holds (`poi_owner`, map.pois order) and drones.
+func update(units: Array[SimUnit], poi_owner: Array[int] = []) -> void:
 	revision += 1
 	for side: int in 2:
 		var f: PackedByteArray = fog[side]
@@ -92,21 +139,35 @@ func update(units: Array[SimUnit]) -> void:
 		_lit[side] = PackedInt32Array()
 		seen[side] = {}
 	for hq: CellGroup in map.hqs:
-		_serial += 1
-		var c: Vector2i = Vector2i(hq.center.floor())
-		_light_view(hq.owner, _view(c, HQ_SIGHT_CELLS, 1))
-		var centre: Vector2 = hq.center * Simulation.SUBCELL
-		for t: SimUnit in units:
-			if t.side != hq.owner and t.on_map() and t.is_alive() and _stamp[map.index_of(t.cell())] == _serial 					and map.terrain_at(t.cell()) != Terrain.Type.FOREST:
-				seen[hq.owner][t.id] = true
+		_watch(hq.owner, _view(Vector2i(hq.center.floor()), HQ_SIGHT_CELLS, 1), units)
+	for i: int in poi_owner.size():
+		if poi_owner[i] != CellGroup.NO_OWNER:
+			var p: CellGroup = map.pois[i]
+			_watch(poi_owner[i], _view(Vector2i(p.center.floor()), POINT_SIGHT_CELLS, 0), units)
+	for side: int in 2:
+		for d: Vector3 in drones[side]:
+			_watch(side, _disc(Vector2(d.x, d.y), d.z), units)
 	for u: SimUnit in units:
-		if not u.on_map() or not u.is_alive() or u.type.kind == UnitType.Kind.AIR:
+		if not u.on_map() or not u.is_alive() or u.type.kind == UnitType.Kind.AIR or u.type.structure:
 			continue
 		_serial += 1
 		_light_view(u.side, _view(u.cell(), sight_cells(u), 0))
 		for t: SimUnit in units:
 			if t.side != u.side and t.on_map() and t.is_alive() and not seen[u.side].has(t.id) and _spots(u, t):
 				seen[u.side][t.id] = true
+
+
+## A fixed lookout (HQ, held point, drone) lights `cells` for `side` and spots
+## the enemies standing in them, except in forest or smoke.
+func _watch(side: int, cells: PackedInt32Array, units: Array[SimUnit]) -> void:
+	_serial += 1
+	_light_view(side, cells)
+	for t: SimUnit in units:
+		if t.side == side or not t.on_map() or not t.is_alive():
+			continue
+		var i: int = map.index_of(t.cell())
+		if _stamp[i] == _serial and map.terrain_at(t.cell()) != Terrain.Type.FOREST and smoke[i] == 0:
+			seen[side][t.id] = true
 
 
 ## Whether `viewer` picks out `t`: very close always; otherwise its cell must be
@@ -118,16 +179,19 @@ func _spots(viewer: SimUnit, t: SimUnit) -> bool:
 	var c: Vector2i = t.cell()
 	if _stamp[map.index_of(c)] != _serial:
 		return false
-	if map.terrain_at(c) == Terrain.Type.FOREST:
+	if map.terrain_at(c) == Terrain.Type.FOREST or smoke[map.index_of(c)] > 0:
 		return false
 	if map.elevation_at(c) - map.elevation_at(viewer.cell()) >= HIGH_GROUND_LEVELS and d > HIGH_GROUND_REVEAL_CELLS:
 		return false
 	return true
 
 
-## Cells seen from `o` within `r` cells, cached. Blockers within `inner`
-## cells of `o` (an HQ's own block) do not stop sight.
+## Cells seen from `o` within `r` cells, cached while no smoke is near.
+## Blockers within `inner` cells of `o` (an HQ's own block) do not stop sight.
 func _view(o: Vector2i, r: float, inner: int) -> PackedInt32Array:
+	for z: Vector3 in smoke_zones:
+		if Vector2(o).distance_to(Vector2(z.x, z.y)) <= r + z.z + 1.0:
+			return _trace(o, r, inner)
 	var key: Vector3i = Vector3i(map.index_of(o), roundi(r * 100.0), inner)
 	if _views.has(key):
 		return _views[key]
@@ -188,7 +252,7 @@ func _ray(o: Vector2i, eo: int, to: Vector2i, r2: float, inner: int) -> void:
 		var ec: int = map.elevation_at(c)
 		if ridge <= maxi(eo, ec):
 			_mark(c)
-		if Terrain.BLOCKS_SIGHT[map.terrain_at(c)] and maxi(absi(c.x - o.x), absi(c.y - o.y)) > inner:
+		if (Terrain.BLOCKS_SIGHT[map.terrain_at(c)] or smoke[map.index_of(c)] > 0) and maxi(absi(c.x - o.x), absi(c.y - o.y)) > inner:
 			return
 		ridge = maxi(ridge, ec)
 

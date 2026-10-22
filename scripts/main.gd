@@ -1,7 +1,7 @@
 extends Node2D
-## Map view: loads a map, lets the player build a deck, then runs the
-## simulation at a fixed tick rate, builds the render layers and wires input,
-## the hand and the HUD.
+## Map view: loads a map, lets the player build a deck and pick the AI's
+## difficulty, then runs the simulation and the AI at a fixed tick rate,
+## builds the render layers and wires input, the hand and the HUD.
 
 signal map_loaded(map: GameMap)
 signal cursor_cell_changed(cell: Vector2i)
@@ -16,6 +16,21 @@ const DEPLOY_REFUSED: Dictionary[Simulation.Deploy, String] = {
 	Simulation.Deploy.NO_SUPPLY: "補給不足",
 	Simulation.Deploy.OVER_WEIGHT: "超過權重上限",
 	Simulation.Deploy.BAD_PLACE: "只能出在己方出兵區或己方據點附近",
+}
+## Why a support card could not be dropped there, per Card.Aim.
+const AIM_REFUSED: Array[String] = [
+	"不能出在地圖外",
+	"要落在己方看得到的地方",
+	"運補車隊要從己方據點出發",
+	"要點在看得到的敵方單位或橋上",
+	"要點在己方裝甲單位上",
+]
+const CONVOY_PROMPT: String = "運補車隊：點另一個己方據點或總部當終點（右鍵取消）"
+const RESULT_TEXT: Array[String] = ["勝利", "敗北", "平手"]
+const END_TEXT: Dictionary[Simulation.End, String] = {
+	Simulation.End.HQ_DESTROYED: "總部被摧毀",
+	Simulation.End.SCORE: "積分先到門檻",
+	Simulation.End.TIME: "時間到",
 }
 
 @onready var _terrain: TerrainLayer = $TerrainLayer
@@ -33,9 +48,13 @@ const DEPLOY_REFUSED: Dictionary[Simulation.Deploy, String] = {
 var map: GameMap
 ## Null until the player has picked a deck.
 var sim: Simulation
+var ai: AiPlayer
 var style: StylePack = StylePack.dev()
 var _cursor: Vector2i = Vector2i(-1, -1)
 var _tick_time: float = 0.0
+var _bridge_revision: int = 0
+## 運補車隊 dropped and waiting for its destination: [slot, card, start cell].
+var _convoy: Array = []
 
 
 func _ready() -> void:
@@ -61,17 +80,19 @@ func _ready() -> void:
 	_deck_builder.setup(map.config.deck_size, DeckStore.load_deck(map.config.deck_size))
 
 
-## Starts the match with the player's `deck`. The enemy gets the starter
-## deck; it does not play cards until the AI (M6).
-func start_match(deck: Array[StringName]) -> void:
+## Starts the match with the player's `deck` against the AI, which plays the
+## starter deck.
+func start_match(deck: Array[StringName], difficulty: AiPlayer.Difficulty) -> void:
 	DeckStore.save_deck(deck)
 	sim = Simulation.new(map, sim_seed)
 	sim.setup_side(GameMap.Side.PLAYER, deck)
 	sim.setup_side(GameMap.Side.ENEMY, DeckStore.starter(map.config.deck_size))
-	_spawn_placeholders()
+	ai = AiPlayer.new(sim, GameMap.Side.ENEMY, difficulty, sim_seed)
+	_hud.set_difficulty(AiPlayer.NAMES[difficulty])
 	_units.setup(sim, style)
 	_fog.setup(sim, style)
 	_markers.sim = sim
+	_bridge_revision = sim.bridges.revision
 	_deploy.setup(sim, style)
 	_selection.setup(sim, _units, style)
 	_hand.setup(sim)
@@ -85,8 +106,9 @@ func _process(delta: float) -> void:
 	if sim != null:
 		_tick_time += delta
 		var ticks: int = 0
-		while _tick_time >= Simulation.TICK_SEC and ticks < MAX_TICKS_PER_FRAME:
+		while _tick_time >= Simulation.TICK_SEC and ticks < MAX_TICKS_PER_FRAME and sim.winner == Simulation.NO_WINNER:
 			sim.step()
+			ai.update()
 			_units.capture_tick()
 			_tick_time -= Simulation.TICK_SEC
 			ticks += 1
@@ -94,6 +116,12 @@ func _process(delta: float) -> void:
 			_selection.prune_dead()
 			var held: Array[int] = [sim.points_held(GameMap.Side.PLAYER), sim.points_held(GameMap.Side.ENEMY)]
 			_hud.set_score(sim.score, held, sim.ff_penalty[GameMap.Side.PLAYER])
+			_hud.set_match(sim.time_left_sec(), [sim.hq_hp(0), sim.hq_hp(1)] as Array[float])
+			if sim.bridges.revision != _bridge_revision:
+				_bridge_revision = sim.bridges.revision
+				_terrain.build(sim.map, style)
+			if sim.winner != Simulation.NO_WINNER:
+				_show_result()
 		if ticks == MAX_TICKS_PER_FRAME:
 			_tick_time = minf(_tick_time, Simulation.TICK_SEC)
 		_units.alpha = _tick_time / Simulation.TICK_SEC
@@ -117,43 +145,47 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_camera.fit()
 
 
-## A card from the hand let go over the map: play it there, or say why not.
-func _on_card_dropped(slot: int, card: StringName, screen_pos: Vector2) -> void:
+func _show_result() -> void:
+	var r: String = RESULT_TEXT[sim.winner] if sim.winner != Simulation.DRAW else RESULT_TEXT[2]
+	_hud.show_result("%s｜%s\n積分 我方 %d：敵方 %d" % [r, END_TEXT[sim.end_reason], sim.score[0], sim.score[1]])
+
+
+func _screen_cell(screen_pos: Vector2) -> Vector2i:
 	var world: Vector2 = get_canvas_transform().affine_inverse() * screen_pos
-	var cell: Vector2i = Vector2i((world / float(style.cell_px)).floor())
+	return Vector2i((world / float(style.cell_px)).floor())
+
+
+## A card from the hand let go over the map: play it there, or say why not.
+## 運補車隊 then waits for a click on its destination.
+func _on_card_dropped(slot: int, card: StringName, screen_pos: Vector2) -> void:
+	var cell: Vector2i = _screen_cell(screen_pos)
 	var r: Simulation.Deploy = sim.can_deploy(GameMap.Side.PLAYER, slot, card, cell)
-	if r == Simulation.Deploy.OK:
-		sim.issue(SimCommand.deploy(GameMap.Side.PLAYER, slot, card, cell))
+	if r != Simulation.Deploy.OK:
+		_hand.flash(AIM_REFUSED[Card.aim(card)] if r == Simulation.Deploy.BAD_PLACE and Card.is_support(card) else DEPLOY_REFUSED[r])
+	elif card == &"supply_convoy":
+		_convoy = [slot, card, cell]
+		_hand.set_prompt(CONVOY_PROMPT)
+		_deploy.set_convoy(cell)
 	else:
-		_hand.flash(DEPLOY_REFUSED[r])
+		sim.issue(SimCommand.deploy(GameMap.Side.PLAYER, slot, card, cell))
 
 
-## Test enemies until the AI (M6): a group at their spawn, a held outpost at
-## the objective nearest to us and a tank and mortar at the next one.
-func _spawn_placeholders() -> void:
-	var theirs: Array[UnitType] = [UnitType.infantry(), UnitType.of(&"bazooka"), UnitType.tank()]
-	if map.player_spawn == null or map.enemy_spawn == null:
+## While a 運補車隊 waits for its destination, a left click picks it and a
+## right click calls it off.
+func _input(event: InputEvent) -> void:
+	var mb: InputEventMouseButton = event as InputEventMouseButton
+	if _convoy.is_empty() or mb == null or not mb.pressed:
 		return
-	var home: Vector2 = map.player_spawn.center
-	_spawn_group(theirs, GameMap.Side.ENEMY, Vector2i(map.enemy_spawn.center.round()))
-	var pois: Array[CellGroup] = map.pois.duplicate()
-	pois.sort_custom(func(a: CellGroup, b: CellGroup) -> bool:
-		return a.center.distance_squared_to(home) < b.center.distance_squared_to(home))
-	if pois.size() >= 1:
-		var outpost: PackedInt32Array = _spawn_group([UnitType.infantry(), UnitType.infantry(), UnitType.scout_car()] as Array[UnitType],
-			GameMap.Side.ENEMY, Vector2i(pois[0].center.round()))
-		sim.issue(SimCommand.hold(GameMap.Side.ENEMY, outpost))
-	if pois.size() >= 2:
-		_spawn_group([UnitType.tank(), UnitType.mortar()] as Array[UnitType], GameMap.Side.ENEMY, Vector2i(pois[1].center.round()))
-
-
-## Spawns `types` spread out around `around`; returns their ids.
-func _spawn_group(types: Array[UnitType], side: int, around: Vector2i) -> PackedInt32Array:
-	var ids: PackedInt32Array = PackedInt32Array()
-	for off: Vector2i in Simulation.slot_offsets(types.size() * 4):
-		if ids.size() == types.size():
-			break
-		var c: Vector2i = around + off * 2
-		if Movement.passable(sim.map, c, types[ids.size()].vehicle):
-			ids.append(sim.spawn(types[ids.size()], side, c).id)
-	return ids
+	if mb.button_index == MOUSE_BUTTON_LEFT:
+		var dest: Vector2i = _screen_cell(mb.position)
+		var r: Simulation.Deploy = sim.can_deploy(GameMap.Side.PLAYER, _convoy[0], _convoy[1], _convoy[2], dest)
+		if r == Simulation.Deploy.OK:
+			sim.issue(SimCommand.deploy(GameMap.Side.PLAYER, _convoy[0], _convoy[1], _convoy[2], dest))
+		else:
+			_hand.flash("終點要是另一個己方據點或總部" if r == Simulation.Deploy.BAD_PLACE else DEPLOY_REFUSED[r])
+	elif mb.button_index != MOUSE_BUTTON_RIGHT:
+		return
+	_convoy = []
+	_hand.set_prompt("")
+	_deploy.set_convoy(Vector2i(-1, -1))
+	get_viewport().set_input_as_handled()

@@ -26,6 +26,8 @@ var _bar: HBoxContainer
 var _drag_card: StringName = SideState.EMPTY
 var _message: String = ""
 var _message_left: float = 0.0
+## Standing instruction (picking a 運補車隊 destination), empty for none.
+var _prompt: String = ""
 ## Last texts shown, so styles are only rebuilt when the hand changes.
 var _shown: Array[StringName] = []
 
@@ -94,6 +96,11 @@ func flash(text: String) -> void:
 	_message_left = MESSAGE_SEC
 
 
+## Shows `text` over the hand until it is cleared with "".
+func set_prompt(text: String) -> void:
+	_prompt = text
+
+
 func _process(delta: float) -> void:
 	if _sim == null:
 		return
@@ -104,14 +111,20 @@ func _process(delta: float) -> void:
 	var status: String = "補給 %.1f / %d（每秒 +%.2f）｜權重 %d / %d" % [s.supply, _sim.map.config.supply_cap, _sim.supply_rate(side), weight, cap]
 	if _message_left > 0.0:
 		status += "｜" + _message
+	elif _prompt != "":
+		status += "｜" + _prompt
 	_status.text = status
-	_status.add_theme_color_override("font_color", UiTheme.BAD if _message_left > 0.0 else UiTheme.TEXT)
+	_status.add_theme_color_override("font_color", UiTheme.BAD if _message_left > 0.0 else (UiTheme.GOOD if _prompt != "" else UiTheme.TEXT))
 
 	var cooling: PackedStringArray = PackedStringArray()
 	for c: Array in s.cooldowns:
 		cooling.append("%s %d 秒" % [Card.display_name(c[0]), ceili(float(c[1]) / Simulation.TICK_RATE)])
-	for e: Array in s.effects:
-		cooling.append("%s 生效中" % Card.display_name(e[0]))
+	for e: SupportEffect in _sim.effects:
+		if e.side == side:
+			cooling.append("%s 生效中" % Card.display_name(e.card))
+	for u: SimUnit in _sim.units:
+		if u.side == side and u.is_convoy():
+			cooling.append("運補卡車在路上（%d 格）" % floori(u.convoy_cells))
 	var next: String = Card.display_name(s.deck[0]) if not s.deck.is_empty() else "（空）"
 	_queue.text = "牌庫 %d 張，下一張：%s" % [s.deck.size(), next]
 	if not cooling.is_empty():
@@ -123,7 +136,7 @@ func _process(delta: float) -> void:
 			_shown[i] = id
 			_restyle(i, id)
 		var playable: bool = id != SideState.EMPTY and s.supply >= Card.cost(id) \
-			and weight + Card.weight(id) <= cap
+			and weight + Card.weight(id) <= cap and _sim.winner == Simulation.NO_WINNER
 		_cards[i].modulate = Color(1, 1, 1, 0.35 if i == dragging_slot else 1.0) if playable \
 			else Color(0.55, 0.55, 0.55, 0.8)
 	if dragging_slot >= 0:
@@ -148,7 +161,7 @@ func _on_card_input(event: InputEvent, slot: int) -> void:
 	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
 	var id: StringName = _sim.sides[side].hand[slot]
-	if id == SideState.EMPTY:
+	if id == SideState.EMPTY or _sim.winner != Simulation.NO_WINNER:
 		return
 	dragging_slot = slot
 	_drag_card = id

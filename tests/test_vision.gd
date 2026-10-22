@@ -40,7 +40,7 @@ func test_three_fog_states() -> void:
 	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.EXPLORED, "13 cells away beyond 10.5-cell sight")
 	check_eq(sim.vision.fog_at(E, Vector2i(1, 2)), Vision.Fog.EXPLORED, "the other side does not see it")
 	sim.issue(SimCommand.move(P, PackedInt32Array([u.id]), Vector2i(13, 2)))
-	_run(sim, Simulation.TICK_RATE * 12)
+	_run(sim, Simulation.TICK_RATE * 20)
 	check_eq(u.cell(), Vector2i(13, 2), "walked across")
 	check_eq(sim.vision.fog_at(P, Vector2i(1, 2)), Vision.Fog.EXPLORED, "left behind: explored")
 	check_eq(sim.vision.fog_at(P, Vector2i(14, 2)), Vision.Fog.VISIBLE, "now in sight")

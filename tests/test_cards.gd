@@ -98,23 +98,23 @@ func test_setup_shuffles_and_deals_the_hand() -> void:
 
 func test_supply_rate_follows_weight_and_points() -> void:
 	var sim: Simulation = _sim()
-	check(_near(sim.supply_rate(P), 0.5), "empty field: 0.5/s")
+	check(_near(sim.supply_rate(P), 0.2), "empty field: 0.2/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 5))  # 3 x weight 5 = 15
-	check(_near(sim.supply_rate(P), 0.375), "15/30: 0.375/s")
+	check(_near(sim.supply_rate(P), 0.15), "15/30: 0.15/s")
 	for i: int in 3:
 		sim.spawn(UnitType.tank(), P, Vector2i(6 + i, 6))
-	check(_near(sim.supply_rate(P), 0.25), "30/30: 0.25/s")
+	check(_near(sim.supply_rate(P), 0.1), "30/30: 0.1/s")
 	sim.poi_owner[0] = P
-	check(_near(sim.supply_rate(P), 0.4), "one point held: +0.15/s")
-	check(_near(sim.supply_rate(E), 0.5), "the other side is unaffected")
+	check(_near(sim.supply_rate(P), 0.15), "one point held: +0.05/s")
+	check(_near(sim.supply_rate(E), 0.2), "the other side is unaffected")
 
 
 func test_supply_grows_and_caps() -> void:
 	var sim: Simulation = _sim()
 	_run(sim, Simulation.TICK_RATE * 4)
-	check(_near(sim.sides[P].supply, 7.0), "5 + 4 s x 0.5")
-	_run(sim, Simulation.TICK_RATE * 20)
+	check(_near(sim.sides[P].supply, 5.8), "5 + 4 s x 0.2")
+	_run(sim, Simulation.TICK_RATE * 40)
 	check_eq(sim.sides[P].supply, 10.0, "stops at the map's cap")
 
 
@@ -130,7 +130,7 @@ func test_deploy_in_spawn_zone_draws_from_the_deck() -> void:
 	check_eq(u.type.id, &"infantry", "right unit")
 	check_eq(u.card, &"infantry", "remembers its card")
 	check_eq(u.cell(), Vector2i(1, 1), "where it was dropped")
-	check(_near(s.supply, 5.0 - 2.0 + 0.5 * Simulation.TICK_SEC), "cost paid after this tick's supply")
+	check(_near(s.supply, 5.0 - 2.0 + Simulation.SUPPLY_BASE * Simulation.TICK_SEC), "cost paid after this tick's supply")
 	check_eq(s.hand, [&"javelin", &"apc", &"tank", &"scout_car"] as Array[StringName], "slot refilled from the top")
 	check_eq(s.deck, [&"mortar"] as Array[StringName], "deck shrinks")
 	check_eq(sim.field_weight(P), 2, "weight counts it")
@@ -143,7 +143,7 @@ func test_deploy_is_refused_where_and_when_it_should_be() -> void:
 	check_eq(sim.can_deploy(P, 0, &"infantry", Vector2i(21, 7)), Simulation.Deploy.BAD_PLACE, "enemy spawn")
 	check_eq(sim.can_deploy(P, 0, &"tank", Vector2i(1, 1)), Simulation.Deploy.NOT_IN_HAND, "slot holds another card")
 	check_eq(sim.can_deploy(P, 9, &"infantry", Vector2i(1, 1)), Simulation.Deploy.NOT_IN_HAND, "no such slot")
-	check_eq(sim.can_deploy(P, 3, &"supply_convoy", Vector2i(10, 1)), Simulation.Deploy.OK, "support cards go anywhere")
+	check_eq(sim.can_deploy(P, 3, &"supply_convoy", Vector2i(10, 1)), Simulation.Deploy.BAD_PLACE, "a convoy starts at a held point")
 	sim.issue(SimCommand.deploy(P, 0, &"infantry", Vector2i(10, 1)))
 	sim.step()
 	check_eq(sim.last_deploy[P], Simulation.Deploy.BAD_PLACE, "sim re-checks the command")
@@ -192,24 +192,6 @@ func test_empty_deck_leaves_the_slot_empty_until_a_card_returns() -> void:
 	_run(sim, roundi(Card.cooldown_sec(&"infantry") * Simulation.TICK_RATE) + 1)
 	check_eq(s.hand[0], &"infantry", "the returning card fills the empty slot")
 	check(s.deck.is_empty(), "and does not wait in the deck")
-
-
-func test_supply_convoy_pays_out_and_returns() -> void:
-	var sim: Simulation = _sim()
-	sim.map.config.supply_cap = 20
-	var s: SideState = _deal(sim, [&"supply_convoy", &"apc", &"tank", &"scout_car"], [&"javelin"], 5.0)
-	sim.issue(SimCommand.deploy(P, 0, &"supply_convoy", Vector2i(10, 1)))
-	sim.step()
-	check(_near(s.supply, 4.0 + 0.5 * Simulation.TICK_SEC), "cost 1 paid")
-	check_eq(s.effects.size(), 1, "effect running")
-	check_eq(sim.field_weight(P), 0, "no unit")
-	var delay: int = roundi(Card.CONVOY_DELAY_SEC * Simulation.TICK_RATE)
-	_run(sim, delay - 1)
-	check(s.supply < 6.0, "not paid yet")
-	sim.step()
-	check(_near(s.supply, 4.0 + 4.0 + 0.5 * Simulation.TICK_SEC * (delay + 1)), "4 supply after 3 s")
-	check_eq(s.deck.back(), &"supply_convoy", "card back at the bottom, no cooldown")
-	check(s.cooldowns.is_empty(), "nothing cooling")
 
 
 func test_retreat_drives_home_and_refunds_half() -> void:

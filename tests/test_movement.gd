@@ -38,25 +38,25 @@ func test_command_runs_on_next_tick() -> void:
 func test_infantry_speed_on_plain() -> void:
 	var sim: Simulation = _one_unit(["............"], UnitType.infantry())
 	_run(sim, Simulation.TICK_RATE)
-	_check_moved(sim, 1.5, "1 s on plain")
+	_check_moved(sim, 1.5 * Simulation.SPEED_SCALE, "1 s on plain")
 
 
 func test_speed_scales_with_map() -> void:
 	var sim: Simulation = _one_unit(["............"], UnitType.infantry(), [], 10.0)
 	_run(sim, Simulation.TICK_RATE)
-	_check_moved(sim, 3.0, "10 m/cell map")
+	_check_moved(sim, 3.0 * Simulation.SPEED_SCALE, "10 m/cell map")
 
 
 func test_road_is_faster() -> void:
 	var sim: Simulation = _one_unit(["rrrrrrrrrrrr"], UnitType.infantry())
 	_run(sim, Simulation.TICK_RATE)
-	_check_moved(sim, 1.95, "road 130%")
+	_check_moved(sim, 1.95 * Simulation.SPEED_SCALE, "road 130%")
 
 
 func test_vehicle_slow_in_forest() -> void:
 	var sim: Simulation = _one_unit(["ffffffffffff"], UnitType.tank())
 	_run(sim, Simulation.TICK_RATE)
-	_check_moved(sim, 1.0, "tank in forest 50%")
+	_check_moved(sim, 1.0 * Simulation.SPEED_SCALE, "tank in forest 50%")
 
 
 func test_uphill_is_slower() -> void:
@@ -72,7 +72,7 @@ func test_uphill_is_slower() -> void:
 
 func test_arrives_and_stops() -> void:
 	var sim: Simulation = _one_unit(["....."], UnitType.scout_car())
-	_run(sim, 40)
+	_run(sim, 70)
 	var u: SimUnit = sim.unit(1)
 	check_eq(u.pos, Simulation.cell_center(Vector2i(4, 0)), "at destination centre")
 	check(not u.is_moving(), "idle")
@@ -111,7 +111,7 @@ func test_group_gets_distinct_destinations() -> void:
 	for i: int in 6:
 		ids.append(sim.spawn(UnitType.infantry(), GameMap.Side.PLAYER, Vector2i(i / 5, i % 5)).id)
 	sim.issue(SimCommand.move(GameMap.Side.PLAYER, ids, Vector2i(7, 2)))
-	_run(sim, 200)
+	_run(sim, 340)
 	var seen: Dictionary[Vector2i, bool] = {}
 	for u: SimUnit in sim.units:
 		check(not u.is_moving(), "unit %d arrived" % u.id)

@@ -46,10 +46,26 @@ const ORG_RECOVER_HELD: float = 1.5
 const ORG_RECOVER_FOREST: float = 1.5
 const ORG_RECOVER_MOVING: float = 0.5
 ## Section 6 supply per second: BASE × (1 − WEIGHT_SLOWDOWN × weight / cap)
-## + PER_POINT × points held.
-const SUPPLY_BASE: float = 0.5
+## + PER_POINT × points held (pacing decisions of 2026-10-22 in progress.md).
+const SUPPLY_BASE: float = 0.2
 const SUPPLY_WEIGHT_SLOWDOWN: float = 0.5
-const SUPPLY_PER_POINT: float = 0.15
+const SUPPLY_PER_POINT: float = 0.05
+## Pacing (progress.md): every unit moves at 60% of its card speed, and unit
+## weapons, support cards and the HQ gun do 70% of their listed damage.
+const SPEED_SCALE: float = 0.6
+const DAMAGE_SCALE: float = 0.7
+## winner while the match runs, and when both sides end level.
+const NO_WINNER: int = -1
+const DRAW: int = 2
+## A 運補車隊 truck pays out one supply per this many cells driven, within
+## CONVOY_MIN..CONVOY_MAX.
+const CONVOY_CELLS_PER_SUPPLY: float = 10.0
+const CONVOY_MIN: int = 1
+const CONVOY_MAX: int = 6
+## A truck has arrived this close to its HQ's centre (starting value).
+const CONVOY_HQ_REACH_CELLS: float = 3.0
+## Self-propelled guns and rocket launchers wear down bridges (section 4.4).
+const BRIDGE_BREAKERS: Array[StringName] = [&"spg", &"mrl"]
 ## Cards may also be played this close to the centre of a point the side holds
 ## (starting value).
 const DEPLOY_NEAR_POINT_CELLS: float = 4.0
@@ -72,6 +88,8 @@ const SCORE_PER_POINT: int = 1
 
 ## Why a DEPLOY was refused.
 enum Deploy { OK, NOT_IN_HAND, NO_SUPPLY, OVER_WEIGHT, BAD_PLACE }
+## How the match was decided (section 11).
+enum End { NONE, HQ_DESTROYED, SCORE, TIME }
 
 
 ## One shot fired this tick, for drawing tracers and blasts.
@@ -111,6 +129,16 @@ var points: CapturePoints
 var poi_owner: Array[int] = []
 ## Result of each side's last DEPLOY command.
 var last_deploy: Array[Deploy] = [Deploy.OK, Deploy.OK]
+## GameMap.Side that won, DRAW, or NO_WINNER while the match runs. Once set,
+## step() does nothing more.
+var winner: int = NO_WINNER
+var end_reason: End = End.NONE
+## Each side's HQ (a building unit), null when the map has none. Kept after
+## it falls, at 0 health.
+var hq: Array[SimUnit] = [null, null]
+var bridges: Bridges
+## Support cards in play, both sides.
+var effects: Array[SupportEffect] = []
 
 var _by_id: Dictionary[int, SimUnit] = {}
 var _next_id: int = 1
@@ -129,10 +157,41 @@ func _init(p_map: GameMap, seed_value: int = 1) -> void:
 	rng = SimRng.new(seed_value)
 	_pathfinder = Pathfinder.new(map)
 	_pathfinder.prepare()
-	_subcells_per_tick_per_mps = MapScale.meters_to_cells(1.0, map.config.meters_per_cell) * SUBCELL / TICK_RATE
+	_subcells_per_tick_per_mps = MapScale.meters_to_cells(1.0, map.config.meters_per_cell) * SUBCELL / TICK_RATE * SPEED_SCALE
 	vision = Vision.new(map)
 	points = CapturePoints.new(map)
 	poi_owner = points.owner
+	bridges = Bridges.new(map)
+	for g: CellGroup in map.hqs:
+		if hq[g.owner] == null:
+			var h: SimUnit = spawn(UnitType.hq(), g.owner, Vector2i(g.center.floor()))
+			h.pos = Vector2i((g.center * SUBCELL).round())
+			h.prev_pos = h.pos
+			hq[g.owner] = h
+	_claim_start_points()
+
+
+## Each side starts holding the map's start_points points nearest its spawn
+## zone (河城: its rear high ground and its bridgehead square).
+func _claim_start_points() -> void:
+	for side: int in 2:
+		var home: CellGroup = _spawn_zone(side)
+		if home == null:
+			continue
+		var order: Array[int] = []
+		for i: int in map.pois.size():
+			order.append(i)
+		order.sort_custom(func(a: int, b: int) -> bool:
+			var da: float = map.pois[a].center.distance_squared_to(home.center)
+			var db: float = map.pois[b].center.distance_squared_to(home.center)
+			return da < db or (da == db and a < b))
+		var claimed: int = 0
+		for i: int in order:
+			if claimed >= map.config.start_points:
+				break
+			if poi_owner[i] == CellGroup.NO_OWNER:
+				poi_owner[i] = side
+				claimed += 1
 
 
 ## Shuffles `deck` (from the seeded PRNG) and deals `side` its opening hand
@@ -168,17 +227,22 @@ func issue(cmd: SimCommand) -> void:
 
 
 func step() -> void:
+	if winner != NO_WINNER:
+		return
 	tick += 1
 	shots.clear()
 	deaths.clear()
 	retreated.clear()
 	for s: int in sides.size():
 		_update_cards(s)
+	_update_effects()
 	# Hold timers tick before new orders, so a hold takes exactly 4 s from the order.
 	for u: SimUnit in units:
 		_update_hold(u)
 		_update_org(u)
 		_update_unload(u)
+		_update_buffs(u)
+		_update_work(u)
 	var later: Array[SimCommand] = []
 	for cmd: SimCommand in _pending:
 		if cmd.tick == tick:
@@ -190,24 +254,81 @@ func step() -> void:
 	for u: SimUnit in units:
 		_update_chase(u)
 		_update_board(u)
+		_update_convoy(u)
 	for u: SimUnit in units:
 		_move(u)
 	_separate()
 	_carry()
 	points.update(units)
 	if tick % TICK_RATE == 0:
-		for s: int in score.size():
-			score[s] += SCORE_PER_POINT * points.held_by(s)
+		_score_points()
+	for b: int in bridges.tick_fuses():
+		_break_bridge(b)
 	if _vision_dirty or (tick - 1) % VISION_TICKS == 0:
-		vision.update(units)
+		vision.update(units, poi_owner)
 		_vision_dirty = false
 	_fire()
 	_remove_gone()
+	_check_end()
+
+
+## Tug of war (progress.md): only the side holding more points scores, by
+## the difference, each whole second.
+func _score_points() -> void:
+	var diff: int = points.held_by(GameMap.Side.PLAYER) - points.held_by(GameMap.Side.ENEMY)
+	if diff > 0:
+		score[GameMap.Side.PLAYER] += SCORE_PER_POINT * diff
+	elif diff < 0:
+		score[GameMap.Side.ENEMY] -= SCORE_PER_POINT * diff
+
+
+## Section 11: an HQ destroyed ends it at once; otherwise the first to the
+## map's score wins, or the higher score when time runs out. Level scores go
+## to the side with more HQ health left; level again is a draw.
+func _check_end() -> void:
+	var lost: Array[bool] = [hq[0] != null and hq_hp(0) <= 0.0, hq[1] != null and hq_hp(1) <= 0.0]
+	if lost[0] or lost[1]:
+		end_reason = End.HQ_DESTROYED
+		winner = DRAW if lost[0] and lost[1] else (1 if lost[0] else 0)
+		return
+	var goal: int = map.config.victory_points
+	if goal > 0 and (score[0] >= goal or score[1] >= goal):
+		end_reason = End.SCORE
+		winner = _leader()
+		return
+	if map.config.time_limit_sec > 0 and tick >= map.config.time_limit_sec * TICK_RATE:
+		end_reason = End.TIME
+		winner = _leader()
+
+
+func _leader() -> int:
+	if score[0] != score[1]:
+		return 0 if score[0] > score[1] else 1
+	if hq_hp(0) != hq_hp(1):
+		return 0 if hq_hp(0) > hq_hp(1) else 1
+	return DRAW
+
+
+## Health left on `side`'s HQ, 0 when it has none.
+func hq_hp(side: int) -> float:
+	return maxf(0.0, hq[side].hp) if hq[side] != null else 0.0
+
+
+## Seconds left before the time limit, or -1 for none.
+func time_left_sec() -> float:
+	if map.config.time_limit_sec <= 0:
+		return -1.0
+	return maxf(0.0, map.config.time_limit_sec - float(tick) / TICK_RATE)
 
 
 ## Cells per second `u` covers on plain ground at this map's scale.
 func cells_per_sec(u: SimUnit) -> float:
-	return MapScale.meters_to_cells(u.type.speed_mps, map.config.meters_per_cell)
+	return MapScale.meters_to_cells(u.type.speed_mps, map.config.meters_per_cell) * SPEED_SCALE
+
+
+## Standard cells (20 m, the doc's unit for ranges and radii) on this map.
+func std_cells(cells: float) -> float:
+	return MapScale.meters_to_cells(MapScale.standard_cells_to_meters(cells), map.config.meters_per_cell)
 
 
 func find_path(from: Vector2i, to: Vector2i, vehicle: bool) -> Array[Vector2i]:
@@ -235,7 +356,8 @@ func can_hit(u: SimUnit, t: SimUnit) -> bool:
 
 
 ## Direct fire cannot pass through forest, buildings or HQs; the cells the
-## two units stand on do not count. Indirect weapons lob over them.
+## two units stand on do not count, nor the HQ block when an HQ shoots or is
+## shot at. Indirect weapons lob over them.
 func line_of_fire(u: SimUnit, t: SimUnit) -> bool:
 	if u.type.weapon != null and u.type.weapon.indirect:
 		return true
@@ -244,9 +366,12 @@ func line_of_fire(u: SimUnit, t: SimUnit) -> bool:
 	var n: int = ceili(d.length() * LOS_SAMPLES)
 	var from_cell: Vector2i = u.cell()
 	var to_cell: Vector2i = t.cell()
+	var skip_hq: bool = u.type.structure or t.type.structure
 	for k: int in range(1, n):
 		var c: Vector2i = Vector2i((a + d * (float(k) / n)).floor())
 		if c == from_cell or c == to_cell:
+			continue
+		if skip_hq and map.terrain_at(c) == Terrain.Type.HQ:
 			continue
 		if Terrain.BLOCKS_SIGHT[map.terrain_at(c)]:
 			return false
@@ -261,7 +386,7 @@ func pen_factor(u: SimUnit, t: SimUnit) -> float:
 ## Damage one shot of `u` deals to `t` before `t`'s own reductions; a
 ## formation that has lost figures hits for less.
 func shot_damage(u: SimUnit, t: SimUnit) -> float:
-	var dmg: float = u.type.weapon.damage * u.strength() * pen_factor(u, t)
+	var dmg: float = u.type.weapon.damage * DAMAGE_SCALE * u.strength() * pen_factor(u, t)
 	var eu: int = map.elevation_at(u.cell())
 	var et: int = map.elevation_at(t.cell())
 	if eu > et:
@@ -284,12 +409,16 @@ func damage_taken(t: SimUnit) -> float:
 ## Changes whenever any unit's position, orders or health differ, or any
 ## side's supply or cards; for replay checks.
 func state_hash() -> int:
-	var parts: Array = [tick, rng.state, score, points.owner, points.taker, points.progress]
+	var parts: Array = [tick, rng.state, score, points.owner, points.taker, points.progress, winner,
+		bridges.hp, bridges.broken, bridges.fuses]
 	for s: SideState in sides:
-		parts.append_array([s.supply, s.deck, s.hand, s.cooldowns, s.effects])
+		parts.append_array([s.supply, s.deck, s.hand, s.cooldowns])
+	for e: SupportEffect in effects:
+		parts.append_array(e.hash_parts())
 	for u: SimUnit in units:
 		parts.append_array([u.id, u.side, u.pos, u.path_index, u.path, u.hp, u.org, u.routing, u.hold, u.target_id,
-			u.retreating, u.carrier_id, u.board_id, u.unload_ticks])
+			u.retreating, u.carrier_id, u.board_id, u.unload_ticks, u.convoy_goal, u.convoy_cells, u.aps_ticks,
+			u.boost_ticks, u.shield, u.work, u.work_ticks])
 	return hash(parts)
 
 
@@ -316,14 +445,20 @@ func supply_rate(side: int) -> float:
 
 
 ## Whether `side` could play the card in hand slot `slot` at `cell` now.
-## Support cards ignore `cell`.
-func can_deploy(side: int, slot: int, card: StringName, cell: Vector2i) -> Deploy:
+## A support card must suit its aim (Card.Aim); 運補車隊 also needs `cell2`,
+## another point the side holds or its HQ, unless it is left at (-1, -1) to
+## check the start only.
+func can_deploy(side: int, slot: int, card: StringName, cell: Vector2i, cell2: Vector2i = Vector2i(-1, -1)) -> Deploy:
 	var s: SideState = sides[side]
 	if card == SideState.EMPTY or slot < 0 or slot >= s.hand.size() or s.hand[slot] != card:
 		return Deploy.NOT_IN_HAND
 	if s.supply < Card.cost(card):
 		return Deploy.NO_SUPPLY
 	if not Card.is_unit(card):
+		if not Support.can_aim(self, side, card, cell):
+			return Deploy.BAD_PLACE
+		if card == &"supply_convoy" and cell2 != Vector2i(-1, -1) and convoy_goal_at(side, cell, cell2) == SimUnit.NOT_CONVOY:
+			return Deploy.BAD_PLACE
 		return Deploy.OK
 	if field_weight(side) + Card.weight(card) > map.config.weight_cap:
 		return Deploy.OVER_WEIGHT
@@ -354,25 +489,28 @@ func _spawn_zone(side: int) -> CellGroup:
 	return map.player_spawn if side == GameMap.Side.PLAYER else map.enemy_spawn
 
 
-## Supply, cooldowns and running support effects, once per tick.
+## Supply and cooldowns, once per tick.
 func _update_cards(side: int) -> void:
 	var s: SideState = sides[side]
 	s.gain(supply_rate(side) * TICK_SEC, map.config.supply_cap)
 	s.tick_cooldowns()
-	var still: Array = []
-	for e: Array in s.effects:
-		e[1] -= 1
-		if e[1] > 0:
+
+
+## Support cards in play; a finished one goes back to the bottom of the deck.
+func _update_effects() -> void:
+	var still: Array[SupportEffect] = []
+	for e: SupportEffect in effects:
+		if Support.update(self, e):
+			sides[e.side].return_card(e.card)
+		else:
 			still.append(e)
-			continue
-		if e[0] == &"supply_convoy":
-			s.gain(Card.CONVOY_SUPPLY, map.config.supply_cap)
-		s.return_card(e[0])
-	s.effects = still
+	effects = still
 
 
 func _run_deploy(cmd: SimCommand) -> void:
-	var r: Deploy = can_deploy(cmd.side, cmd.slot, cmd.card, cmd.target)
+	var r: Deploy = can_deploy(cmd.side, cmd.slot, cmd.card, cmd.target, cmd.target2)
+	if r == Deploy.OK and cmd.card == &"supply_convoy" and cmd.target2 == Vector2i(-1, -1):
+		r = Deploy.BAD_PLACE
 	last_deploy[cmd.side] = r
 	if r != Deploy.OK:
 		return
@@ -382,8 +520,85 @@ func _run_deploy(cmd: SimCommand) -> void:
 	if Card.is_unit(cmd.card):
 		var u: SimUnit = spawn(UnitType.of(cmd.card), cmd.side, cmd.target)
 		u.card = cmd.card
+	elif cmd.card == &"supply_convoy":
+		var t: SimUnit = spawn(UnitType.supply_truck(), cmd.side, cmd.target)
+		t.card = cmd.card
+		t.convoy_from = near_own_point(cmd.side, cmd.target)
+		t.convoy_goal = convoy_goal_at(cmd.side, cmd.target, cmd.target2)
 	else:
-		s.effects.append([cmd.card, roundi(Card.CONVOY_DELAY_SEC * TICK_RATE)])
+		var e: SupportEffect = Support.play(self, cmd.side, cmd.card, cmd.target)
+		if e != null:
+			effects.append(e)
+		else:
+			s.return_card(cmd.card)
+
+
+# --- 運補車隊 ------------------------------------------------------------------
+
+## Index of a point `side` holds whose centre is within deploy reach of
+## `cell`, the nearest one; -1 for none.
+func near_own_point(side: int, cell: Vector2i) -> int:
+	var at: Vector2 = Vector2(cell) + Vector2(0.5, 0.5)
+	var best: int = -1
+	var best_d: float = DEPLOY_NEAR_POINT_CELLS
+	for i: int in map.pois.size():
+		var d: float = at.distance_to(map.pois[i].center)
+		if poi_owner[i] == side and d <= best_d:
+			best = i
+			best_d = d
+	return best
+
+
+## Where a truck starting at `start` and sent to `dest` drives: another point
+## the side holds (its index) or the side's HQ (SimUnit.GOAL_HQ);
+## SimUnit.NOT_CONVOY when `dest` is neither.
+func convoy_goal_at(side: int, start: Vector2i, dest: Vector2i) -> int:
+	var from: int = near_own_point(side, start)
+	var at: Vector2 = Vector2(dest) + Vector2(0.5, 0.5)
+	if hq[side] != null and at.distance_to(Vector2(hq[side].pos) / SUBCELL) <= CONVOY_HQ_REACH_CELLS:
+		return SimUnit.GOAL_HQ
+	var p: int = near_own_point(side, dest)
+	return p if p >= 0 and p != from else SimUnit.NOT_CONVOY
+
+
+## Centre of a truck's goal, in cells.
+func convoy_goal_centre(u: SimUnit) -> Vector2:
+	if u.convoy_goal == SimUnit.GOAL_HQ:
+		return Vector2(hq[u.side].pos) / SUBCELL if hq[u.side] != null else Vector2(u.cell())
+	return map.pois[u.convoy_goal].center
+
+
+## Supply a truck that drove `cells` pays out.
+static func convoy_payout(cells: float) -> int:
+	return clampi(floori(cells / CONVOY_CELLS_PER_SUPPLY), CONVOY_MIN, CONVOY_MAX)
+
+
+## Keeps a truck driving to its goal; a goal the enemy took is swapped for the
+## nearest point the side still holds (other than where it set out), or its HQ.
+func _update_convoy(u: SimUnit) -> void:
+	if not u.is_convoy() or u.routing:
+		return
+	if u.convoy_goal >= 0 and poi_owner[u.convoy_goal] != u.side:
+		u.convoy_goal = _nearest_convoy_goal(u)
+		u.clear_path()
+	if not u.is_moving() and not convoy_arrived(u) and (tick + u.id) % CHASE_REPATH_TICKS == 0:
+		_path_to(u, Vector2i(convoy_goal_centre(u).floor()))
+
+
+func _nearest_convoy_goal(u: SimUnit) -> int:
+	var at: Vector2 = Vector2(u.pos) / SUBCELL
+	var best: int = SimUnit.GOAL_HQ
+	var best_d: float = at.distance_to(Vector2(hq[u.side].pos) / SUBCELL) if hq[u.side] != null else INF
+	for i: int in map.pois.size():
+		if poi_owner[i] == u.side and i != u.convoy_from and at.distance_to(map.pois[i].center) < best_d:
+			best = i
+			best_d = at.distance_to(map.pois[i].center)
+	return best
+
+
+func convoy_arrived(u: SimUnit) -> bool:
+	var reach: float = CONVOY_HQ_REACH_CELLS if u.convoy_goal == SimUnit.GOAL_HQ else CapturePoints.RADIUS_CELLS
+	return (Vector2(u.pos) / SUBCELL).distance_to(convoy_goal_centre(u)) <= reach
 
 
 # --- Retreat and transports -------------------------------------------------
@@ -516,19 +731,27 @@ static func cell_center(cell: Vector2i) -> Vector2i:
 
 # --- Commands ---------------------------------------------------------------
 
-## Routing and retreating units take no orders, nor do passengers.
+## Routing and retreating units take no orders, nor do passengers, supply
+## trucks or buildings.
 func _run(cmd: SimCommand) -> void:
 	var own: Array[SimUnit] = []
 	for id: int in cmd.unit_ids:
 		var u: SimUnit = unit(id)
-		if u != null and u.side == cmd.side and not u.routing and not u.retreating and u.on_map() and not own.has(u):
+		if (u != null and u.side == cmd.side and not u.routing and not u.retreating and u.on_map() and not own.has(u)
+				and not u.is_convoy() and not u.type.structure):
 			own.append(u)
-	# Any other order calls off boarding and unloading.
+	# Any other order calls off boarding and unloading, and engineer work.
 	if cmd.kind != SimCommand.Kind.LOAD and cmd.kind != SimCommand.Kind.UNLOAD:
 		for u: SimUnit in own:
 			u.board_id = 0
 			u.unload_ticks = 0
+	if cmd.kind != SimCommand.Kind.ENGINEER:
+		for u: SimUnit in own:
+			_stop_work(u)
 	match cmd.kind:
+		SimCommand.Kind.ENGINEER:
+			for u: SimUnit in own:
+				_start_work(u)
 		SimCommand.Kind.DEPLOY:
 			_run_deploy(cmd)
 		SimCommand.Kind.RETREAT:
@@ -629,6 +852,13 @@ func _path_to(u: SimUnit, dest: Vector2i) -> void:
 	if not Movement.passable(map, u.cell(), u.type.vehicle):
 		_unstick(u)
 	var from: Vector2i = u.cell()
+	# A goal on ground the unit cannot stand on (an HQ) would make the search
+	# comb the whole map; aim for the nearest cell it can stand on instead.
+	if not Movement.passable(map, dest, u.type.vehicle):
+		for off: Vector2i in slot_offsets(48):
+			if Movement.passable(map, dest + off, u.type.vehicle):
+				dest += off
+				break
 	u.path = Movement.smooth(map, from, _pathfinder.find_path(from, dest, u.type.vehicle), u.type.vehicle)
 	u.path_index = 0
 
@@ -706,6 +936,8 @@ func _update_chase(u: SimUnit) -> void:
 
 func _move(u: SimUnit) -> void:
 	u.prev_pos = u.pos
+	if u.type.structure:
+		return
 	if not Movement.passable(map, u.cell(), u.type.vehicle):
 		_unstick(u)
 		if u.is_moving():
@@ -717,6 +949,8 @@ func _move(u: SimUnit) -> void:
 		base *= ROUT_SPEED
 	elif u.is_suppressed():
 		base *= SUPPRESSED_SPEED
+	if u.boost_ticks > 0:
+		base *= Support.ASSAULT_SPEED
 	# Distance left this tick, as a fraction of a full tick at the current speed.
 	var time_left: float = 1.0
 	var replanned: bool = false
@@ -736,6 +970,8 @@ func _move(u: SimUnit) -> void:
 			u.path_index += 1
 			continue
 		var speed: float = base * Movement.terrain_speed(map, u.cell(), u.type.vehicle)
+		if u.type.vehicle and bridges.slows(u.cell()):
+			speed *= Bridges.SLOW_SPEED
 		if _climbing(u.pos, d / dist):
 			speed *= Movement.UPHILL_FACTOR
 		if speed <= 0.0:
@@ -750,6 +986,8 @@ func _move(u: SimUnit) -> void:
 			time_left = 0.0
 	if not u.is_moving():
 		u.clear_path()
+	if u.is_convoy():
+		u.convoy_cells += Vector2(u.pos - u.prev_pos).length() / SUBCELL
 
 
 ## Whether `u` can walk in a straight line from where it stands to `target`
@@ -771,8 +1009,8 @@ func _straight_ok(u: SimUnit, target: Vector2i) -> bool:
 
 ## A unit that somehow stands on ground it cannot cross is put on the
 ## nearest cell it can, so it never gets stuck there.
-func _unstick(u: SimUnit) -> void:
-	for off: Vector2i in slot_offsets(24):
+func _unstick(u: SimUnit, count: int = 24) -> void:
+	for off: Vector2i in slot_offsets(count):
 		var c: Vector2i = u.cell() + off
 		if Movement.passable(map, c, u.type.vehicle):
 			u.pos = cell_center(c)
@@ -795,11 +1033,11 @@ func _climbing(pos: Vector2i, dir: Vector2) -> bool:
 func _separate() -> void:
 	for i: int in units.size():
 		var a: SimUnit = units[i]
-		if not a.on_map():
+		if not a.on_map() or a.type.structure:
 			continue
 		for j: int in range(i + 1, units.size()):
 			var b: SimUnit = units[j]
-			if not b.on_map():
+			if not b.on_map() or b.type.structure:
 				continue
 			var min_d: float = (_radius(a) + _radius(b)) * SUBCELL
 			var d: Vector2i = b.pos - a.pos
@@ -876,6 +1114,8 @@ func _fire() -> void:
 			for v: SimUnit in units:
 				if v.type.kind != UnitType.Kind.AIR and v.on_map() and float((v.pos - impact).length_squared()) <= r * r:
 					_hit(u, v)
+			if BRIDGE_BREAKERS.has(u.type.id):
+				damage_bridges_near(Vector2(impact) / SUBCELL, r / SUBCELL, u.type.weapon.damage * DAMAGE_SCALE * u.strength())
 		else:
 			_hit(u, h[1])
 
@@ -937,20 +1177,43 @@ func _splash_subcells(w: Weapon) -> int:
 ## One shot of `src` landing on `v`: damage, and organization lost to
 ## suppression. Both shrink with cover and with armour the shot cannot pierce.
 func _hit(src: SimUnit, v: SimUnit) -> void:
+	var w: Weapon = src.type.weapon
+	_strike(src.side, v, shot_damage(src, v), w.suppression * src.strength() * pen_factor(src, v),
+		w.targets == Weapon.Targets.ARMOR_ONLY, src.pos)
+
+
+## A support card's shell or missile landing on `v` (Support): the pacing
+## ×0.7 and penetration against `v`'s armour apply as for a unit's shot.
+## `anti_armor` hits are halved by 主動防護系統.
+func support_strike(side: int, v: SimUnit, damage: float, penetration: int, suppression: float, anti_armor: bool, from: Vector2i) -> void:
+	var f: float = Weapon.pen_factor(penetration, v.type.armor)
+	_strike(side, v, damage * DAMAGE_SCALE * f, suppression * f, anti_armor, from)
+
+
+## `dmg` and `sup` before `v`'s cover. A building never loses organization;
+## a 附加裝甲 shield soaks damage first.
+func _strike(side: int, v: SimUnit, dmg: float, sup: float, anti_armor: bool, from: Vector2i) -> void:
 	if not v.is_alive():
 		return
 	var taken: float = damage_taken(v)
-	var sup: float = src.type.weapon.suppression * src.strength() * pen_factor(src, v) * taken
-	if sup > 0.0:
+	sup *= taken
+	if sup > 0.0 and not v.type.structure:
 		v.org = maxf(0.0, v.org - sup)
 		v.last_hit_tick = tick
 		if v.org <= 0.0 and not v.routing:
-			_rout(v, src)
-	var dealt: float = minf(shot_damage(src, v) * taken, v.hp)
+			_rout(v, from)
+	var raw: float = dmg * taken
+	if anti_armor and v.aps_ticks > 0:
+		raw *= Support.APS_TAKEN
+	if v.shield > 0.0:
+		var soaked: float = minf(v.shield, raw)
+		v.shield -= soaked
+		raw -= soaked
+	var dealt: float = minf(raw, v.hp)
 	v.hp -= dealt
-	if src.side != v.side:
+	if side != v.side:
 		return
-	var s: int = src.side
+	var s: int = side
 	friendly_damage[s] += dealt
 	var owed: int = int(friendly_damage[s] / 100.0) * FF_SCORE_PER_100
 	if owed > _ff_damage_penalised[s]:
@@ -961,21 +1224,22 @@ func _hit(src: SimUnit, v: SimUnit) -> void:
 
 
 ## Out of organization: drops every order, leaves its position and walks
-## slowly back to its spawn zone (or away from `src`) until it rallies.
+## slowly back to its spawn zone (or away from `from`) until it rallies.
 ## Enemies that keep after it can wipe it out, since it does not fire back.
-func _rout(u: SimUnit, src: SimUnit) -> void:
+func _rout(u: SimUnit, from: Vector2i) -> void:
 	u.routing = true
 	_drop_target(u)
+	_stop_work(u)
 	u.pending_dest = Vector2i(-1, -1)
 	u.hold = SimUnit.Hold.NONE
-	_path_to(u, _rout_cell(u, src))
+	_path_to(u, _rout_cell(u, from))
 
 
-func _rout_cell(u: SimUnit, src: SimUnit) -> Vector2i:
+func _rout_cell(u: SimUnit, from: Vector2i) -> Vector2i:
 	var home: CellGroup = map.player_spawn if u.side == GameMap.Side.PLAYER else map.enemy_spawn
 	if home != null:
 		return Vector2i(home.center.round())
-	var away: Vector2 = Vector2(u.pos - src.pos)
+	var away: Vector2 = Vector2(u.pos - from)
 	away = away.normalized() if away != Vector2.ZERO else Vector2(1.0, 0.0)
 	var c: Vector2i = u.cell() + Vector2i((away * ROUT_FALLBACK_CELLS).round())
 	return Vector2i(clampi(c.x, 0, map.width - 1), clampi(c.y, 0, map.height - 1))
@@ -1004,8 +1268,16 @@ func _remove_gone() -> void:
 				for id: int in u.passengers:
 					unit(id).hp *= 1.0 - WRECKED_CARRIER_LOSS
 				_eject(u)
-			if u.card != &"":
+			if u.is_convoy():
+				# A truck shot up delivers nothing; its card goes straight back.
+				sides[u.side].return_card(u.card)
+			elif u.card != &"":
 				sides[u.side].start_cooldown(u.card, roundi(Card.cooldown_sec(u.card) * TICK_RATE))
+		elif u.is_convoy() and convoy_arrived(u):
+			retreated.append(u)
+			var cs: SideState = sides[u.side]
+			cs.gain(convoy_payout(u.convoy_cells), map.config.supply_cap)
+			cs.return_card(u.card)
 		elif leaving.has(u.id):
 			retreated.append(u)
 			if u.card != &"":
@@ -1037,3 +1309,142 @@ func _in_cover(c: Vector2i) -> bool:
 		if map.in_bounds(n) and map.terrain_at(n) == Terrain.Type.BUILDING:
 			return true
 	return false
+
+
+# --- Support cards, buffs and bridges ----------------------------------------
+
+## Units standing on the ground (not riding, not in the air), buildings too.
+func ground_units() -> Array[SimUnit]:
+	var out: Array[SimUnit] = []
+	for u: SimUnit in units:
+		if u.on_map() and u.is_alive() and u.type.kind != UnitType.Kind.AIR:
+			out.append(u)
+	return out
+
+
+## Middle of `side`'s spawn zone, or of its HQ, in cells.
+func home_centre(side: int) -> Vector2:
+	var home: CellGroup = _spawn_zone(side)
+	if home != null:
+		return home.center
+	return Vector2(hq[side].pos) / SUBCELL if hq[side] != null else Vector2(map.width, map.height) * 0.5
+
+
+## A blast for the view to draw (support cards), radius in cells.
+func add_blast(side: int, at: Vector2i, radius_cells: float) -> void:
+	var s: Shot = Shot.new()
+	s.side = side
+	s.from = at
+	s.to = at
+	s.splash = roundi(radius_cells * SUBCELL)
+	shots.append(s)
+
+
+## Standing bridges with a cell within `r` cells of `at` (cells).
+func bridges_near(at: Vector2, r: float) -> Array[int]:
+	var out: Array[int] = []
+	for y: int in range(floori(at.y - r), ceili(at.y + r) + 1):
+		for x: int in range(floori(at.x - r), ceili(at.x + r) + 1):
+			var c: Vector2i = Vector2i(x, y)
+			var b: int = bridges.at(c)
+			if b >= 0 and not bridges.broken[b] and not out.has(b) and (Vector2(c) + Vector2(0.5, 0.5)).distance_to(at) <= r + 0.5:
+				out.append(b)
+	return out
+
+
+## Shells landing at `at` wear down every bridge within `r` cells once.
+func damage_bridges_near(at: Vector2, r: float, amount: float) -> void:
+	for b: int in bridges_near(at, r):
+		damage_bridge(b, amount)
+
+
+func damage_bridge(b: int, amount: float) -> void:
+	if bridges.damage(b, amount):
+		_break_bridge(b)
+
+
+## Section 4.4: the bridge turns into water. Whoever was on it takes 200 and
+## falls in: vehicles are lost, infantry that lives is washed to the nearest
+## bank.
+func _break_bridge(b: int) -> void:
+	if bridges.broken[b]:
+		return
+	var on_it: Array[SimUnit] = []
+	for u: SimUnit in units:
+		if u.on_map() and u.is_alive() and not u.type.structure and bridges.at(u.cell()) == b:
+			on_it.append(u)
+	bridges.set_broken(b)
+	_pathfinder.refresh(map.bridges[b].cells)
+	for u: SimUnit in on_it:
+		_stop_work(u)
+		u.hp = 0.0 if u.type.vehicle else maxf(0.0, u.hp - Bridges.FALL_DAMAGE)
+		if u.is_alive():
+			_drop_target(u)
+			u.hold = SimUnit.Hold.NONE
+			u.pending_dest = Vector2i(-1, -1)
+			u.clear_path()
+			_unstick(u, 200)
+	_vision_dirty = true
+
+
+## 主動防護系統 and 裝甲突擊 wear off.
+func _update_buffs(u: SimUnit) -> void:
+	if u.aps_ticks > 0:
+		u.aps_ticks -= 1
+	if u.boost_ticks > 0:
+		u.boost_ticks -= 1
+
+
+## Engineers (section 4.4): on a standing bridge they plant a charge, next to
+## a broken one they rebuild it for 3 supply. They stop where they are.
+func _start_work(u: SimUnit) -> void:
+	if u.type.id != &"engineer" or u.work != SimUnit.Work.NONE:
+		return
+	var b: int = bridges.at(u.cell())
+	if b >= 0 and not bridges.broken[b]:
+		u.work = SimUnit.Work.DEMOLISH
+		u.work_ticks = Bridges.PLANT_TICKS
+	else:
+		b = bridges.broken_near(u.cell())
+		if b < 0 or sides[u.side].supply < Bridges.REPAIR_COST:
+			return
+		sides[u.side].supply -= Bridges.REPAIR_COST
+		u.work = SimUnit.Work.REPAIR
+		u.work_ticks = Bridges.REPAIR_TICKS
+	u.work_bridge = b
+	u.work_since = tick
+	u.clear_path()
+	_drop_target(u)
+	u.pending_dest = Vector2i(-1, -1)
+
+
+## Calls work off; an unfinished repair gives its supply back.
+func _stop_work(u: SimUnit) -> void:
+	if u.work == SimUnit.Work.REPAIR:
+		sides[u.side].gain(Bridges.REPAIR_COST, map.config.supply_cap)
+	u.work = SimUnit.Work.NONE
+	u.work_ticks = 0
+	u.work_bridge = -1
+
+
+## Getting hit or the bridge changing under them calls the work off.
+func _update_work(u: SimUnit) -> void:
+	if u.work == SimUnit.Work.NONE:
+		return
+	var want_broken: bool = u.work == SimUnit.Work.REPAIR
+	if u.last_hit_tick >= u.work_since or u.routing or bridges.broken[u.work_bridge] != want_broken:
+		_stop_work(u)
+		return
+	u.work_ticks -= 1
+	if u.work_ticks > 0:
+		return
+	var b: int = u.work_bridge
+	if u.work == SimUnit.Work.DEMOLISH:
+		bridges.fuses.append([b, Bridges.FUSE_TICKS])
+	else:
+		bridges.rebuild(b)
+		_pathfinder.refresh(map.bridges[b].cells)
+		_vision_dirty = true
+	u.work = SimUnit.Work.NONE
+	u.work_ticks = 0
+	u.work_bridge = -1
