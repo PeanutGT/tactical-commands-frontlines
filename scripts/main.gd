@@ -22,6 +22,7 @@ const DEPLOY_REFUSED: Dictionary[Simulation.Deploy, String] = {
 @onready var _markers: MapMarkers = $Markers
 @onready var _grid: GridOverlay = $Grid
 @onready var _units: UnitLayer = $Units
+@onready var _fog: FogLayer = $Fog
 @onready var _deploy: DeployOverlay = $Deploy
 @onready var _selection: SelectionController = $Selection
 @onready var _camera: CameraController = $Camera
@@ -69,6 +70,8 @@ func start_match(deck: Array[StringName]) -> void:
 	sim.setup_side(GameMap.Side.ENEMY, DeckStore.starter(map.config.deck_size))
 	_spawn_placeholders()
 	_units.setup(sim, style)
+	_fog.setup(sim, style)
+	_markers.sim = sim
 	_deploy.setup(sim, style)
 	_selection.setup(sim, _units, style)
 	_hand.setup(sim)
@@ -89,7 +92,8 @@ func _process(delta: float) -> void:
 			ticks += 1
 		if ticks > 0:
 			_selection.prune_dead()
-			_hud.set_score(sim.score[GameMap.Side.PLAYER], sim.ff_penalty[GameMap.Side.PLAYER])
+			var held: Array[int] = [sim.points_held(GameMap.Side.PLAYER), sim.points_held(GameMap.Side.ENEMY)]
+			_hud.set_score(sim.score, held, sim.ff_penalty[GameMap.Side.PLAYER])
 		if ticks == MAX_TICKS_PER_FRAME:
 			_tick_time = minf(_tick_time, Simulation.TICK_SEC)
 		_units.alpha = _tick_time / Simulation.TICK_SEC

@@ -18,6 +18,9 @@ extends Resource
 @export var unit_outline: Color = Color.BLACK
 @export var selection: Color = Color.WHITE
 @export var order_marker: Color = Color.GREEN
+## Fog opacity over cells never seen, and over cells seen before but not now.
+@export var fog_unexplored: float = 1.0
+@export var fog_explored: float = 0.5
 
 
 static func dev() -> StylePack:
@@ -45,6 +48,8 @@ static func dev() -> StylePack:
 	s.unit_outline = Color("10140e")
 	s.selection = Color("f4f8ea")
 	s.order_marker = Color("9cf06a")
+	s.fog_unexplored = 1.0
+	s.fog_explored = 0.5
 	return s
 
 

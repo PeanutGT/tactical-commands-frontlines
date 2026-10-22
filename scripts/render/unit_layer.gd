@@ -33,6 +33,8 @@ const RETREAT_ALPHA: float = 0.5
 const PASSENGER_PIP: float = 0.18  # cells
 
 var sim: Simulation
+## Side whose eyes the view uses: other sides' units show only while seen.
+var view_side: int = GameMap.Side.PLAYER
 ## Fraction of the way from the last tick to the next one, 0..1.
 var alpha: float = 0.0
 var selected: Dictionary[int, bool] = {}
@@ -67,10 +69,13 @@ func pick_radius(u: SimUnit) -> float:
 func capture_tick() -> void:
 	var k: float = float(_style.cell_px) / float(Simulation.SUBCELL)
 	for shot: Simulation.Shot in sim.shots:
+		if shot.side != view_side and not _in_view(shot.from) and not _in_view(shot.to):
+			continue
 		var life: float = BLAST_SEC if shot.splash > 0 else TRACER_SEC
 		_shots.append([Vector2(shot.from) * k, Vector2(shot.to) * k, float(shot.splash) * k, life, shot.side])
 	for u: SimUnit in sim.deaths:
-		_wrecks.append([Vector2(u.pos) * k, WRECK_SEC])
+		if u.side == view_side or _in_view(u.pos):
+			_wrecks.append([Vector2(u.pos) * k, WRECK_SEC])
 		_heading.erase(u.id)
 		selected.erase(u.id)
 	for u: SimUnit in sim.retreated:
@@ -81,6 +86,15 @@ func capture_tick() -> void:
 		var p: SimUnit = sim.unit(id)
 		if p != null and not p.on_map():
 			selected.erase(id)
+
+
+## Whether a point in sub-cells lies in a cell the view side sees now.
+func _in_view(pos: Vector2i) -> bool:
+	return sim.vision.cell_visible(view_side, Vector2i(pos.x / Simulation.SUBCELL, pos.y / Simulation.SUBCELL))
+
+
+func shows(u: SimUnit) -> bool:
+	return u.on_map() and sim.vision.sees(view_side, u)
 
 
 func _process(delta: float) -> void:
@@ -108,12 +122,12 @@ func _draw() -> void:
 		if u.is_moving():
 			_draw_path(u, s)
 		var t: SimUnit = sim.unit(u.target_id) if u.forced_target else null
-		if t != null:
+		if t != null and shows(t):
 			var tc: Color = _style.unit_colors[GameMap.Side.ENEMY]
 			tc.a = 0.6
 			draw_line(world_pos(u), world_pos(t), tc, 1.0)
 	for u: SimUnit in sim.units:
-		if not u.on_map():
+		if not shows(u):
 			continue
 		var p: Vector2 = world_pos(u)
 		var fill: Color = _style.unit_colors[u.side]

@@ -15,7 +15,8 @@ var _map: GameMap
 var _zoom: float = 1.0
 var _cell: Vector2i = Vector2i(-1, -1)
 var _selected: int = 0
-var _score: int = 0
+var _score: Array[int] = [0, 0]
+var _points: Array[int] = [0, 0]
 var _penalty: int = 0
 
 
@@ -56,10 +57,13 @@ func set_selection(count: int) -> void:
 	_refresh()
 
 
-func set_score(score: int, penalty: int) -> void:
-	if score == _score and penalty == _penalty:
+## Score and points held per side (GameMap.Side), and the player's
+## friendly-fire penalty.
+func set_score(score: Array[int], points: Array[int], penalty: int) -> void:
+	if score == _score and points == _points and penalty == _penalty:
 		return
-	_score = score
+	_score = score.duplicate()
+	_points = points.duplicate()
 	_penalty = penalty
 	_refresh()
 
@@ -71,8 +75,10 @@ func _refresh() -> void:
 	var text: String = "%s  %d×%d 格｜%s 公尺/格｜縮放 %.2f" % [c.name, _map.width, _map.height, String.num(c.meters_per_cell), _zoom]
 	if _map.in_bounds(_cell):
 		text += "\n(%d, %d)  %s｜高度 %d" % [_cell.x, _cell.y, TERRAIN_NAMES[_map.terrain_at(_cell)], _map.elevation_at(_cell)]
-	text += "\n我方積分 %d｜誤傷扣分 %d" % [_score, _penalty]
+	var goal: String = "／%d" % c.victory_points if c.victory_points > 0 else ""
+	text += "\n積分 我方 %d%s（%d 據點）｜敵方 %d%s（%d 據點）｜誤傷扣分 %d" % [
+		_score[GameMap.Side.PLAYER], goal, _points[GameMap.Side.PLAYER],
+		_score[GameMap.Side.ENEMY], goal, _points[GameMap.Side.ENEMY], _penalty]
 	if _selected > 0:
-		text += "
-已選 %d 個單位" % _selected
+		text += "\n已選 %d 個單位" % _selected
 	_info.text = text

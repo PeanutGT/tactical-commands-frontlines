@@ -144,7 +144,7 @@ func _unit_at(world: Vector2, of_side: int) -> SimUnit:
 	var best: SimUnit = null
 	var best_d: float = INF
 	for u: SimUnit in _sim.units:
-		if not u.on_map() or (of_side >= 0 and u.side != of_side):
+		if not _layer.shows(u) or (of_side >= 0 and u.side != of_side):
 			continue
 		var d: float = _layer.world_pos(u).distance_to(world)
 		if d <= _layer.pick_radius(u) and d < best_d:

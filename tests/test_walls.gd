@@ -50,6 +50,8 @@ func test_artillery_fires_over_buildings() -> void:
 	var sim: Simulation = Simulation.new(map_from_rows(WALL), 3)
 	var mortar: SimUnit = sim.spawn(UnitType.mortar(), P, Vector2i(1, 3))
 	var t: SimUnit = sim.spawn(_dummy(), E, Vector2i(9, 3))
+	# Unarmed spotter 3 cells from the target, outside the blast.
+	sim.spawn(_dummy(), P, Vector2i(9, 6))
 	check(UnitType.mortar().weapon.indirect and UnitType.of(&"spg").weapon.indirect and UnitType.of(&"mrl").weapon.indirect, "artillery is indirect")
 	check(not UnitType.tank().weapon.indirect, "tanks fire direct")
 	check(sim.line_of_fire(mortar, t), "lobs over")
