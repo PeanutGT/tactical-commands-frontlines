@@ -183,10 +183,10 @@ func _pick_up(slot: int) -> bool:
 ## 1-4 pick up the card in that hand slot (pressing it again puts it down).
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key: InputEventKey = event as InputEventKey
-	if key == null or not key.pressed or key.echo:
+	if key == null or not key.pressed or key.echo or key.is_command_or_control_pressed() or key.shift_pressed:
 		return
 	var slot: int = key.physical_keycode - KEY_1
-	if slot < 0 or slot > 8:
+	if slot < 0 or slot > 3:
 		return
 	if slot == dragging_slot:
 		_end_drag()

@@ -4,17 +4,23 @@ extends Node2D
 ## Shift adds, right-click moves (or attacks the enemy under the cursor),
 ## Ctrl+right-click force-attacks any unit, right-click on an own transport
 ## boards the selected infantry, H toggles hold position, X stops, R retreats,
-## U unloads, B sets engineers to blow up or rebuild a bridge. HQs and supply
-## trucks cannot be selected. Orders go to the simulation as
+## U unloads, B sets engineers to blow up or rebuild a bridge. Control groups:
+## Ctrl+5..9/0 saves the selection, 5..9/0 recalls it (twice quickly also
+## centres the camera on it), Shift+5..9/0 adds it to the selection. HQs and
+## supply trucks cannot be selected. Orders go to the simulation as
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
 ## A short note for the player about an order (some units cannot hurt the target).
 signal order_note(text: String)
+## Ask the camera to centre on a world point (double-tapped control group).
+signal focus_requested(world: Vector2)
 
 ## Screen pixels the mouse must travel before a press becomes a box.
 const DRAG_THRESHOLD: float = 6.0
 const MARKER_SEC: float = 0.6
+## Number keys for control groups; 1-4 stay with the hand cards.
+const GROUP_KEYS: Array[Key] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
 
 var side: int = GameMap.Side.PLAYER
 
@@ -28,6 +34,7 @@ var _boxing: bool = false
 var _drag_world: Vector2 = Vector2.ZERO
 var _marker_pos: Vector2 = Vector2.ZERO
 var _marker_left: float = 0.0
+var _groups: ControlGroups = ControlGroups.new()
 
 
 func setup(sim: Simulation, layer: UnitLayer, style: StylePack) -> void:
@@ -88,6 +95,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		var key: InputEventKey = event
 		if not key.pressed or key.echo:
 			return
+		var group: int = GROUP_KEYS.find(key.physical_keycode)
+		if group >= 0:
+			_on_group_key(group, key)
+			get_viewport().set_input_as_handled()
+			return
 		var ids: PackedInt32Array = selected_ids()
 		match key.physical_keycode:
 			KEY_X:
@@ -110,6 +122,34 @@ func _unhandled_input(event: InputEvent) -> void:
 				if not ids.is_empty():
 					_sim.issue(SimCommand.engineer(side, ids))
 				get_viewport().set_input_as_handled()
+
+
+func _on_group_key(group: int, key: InputEventKey) -> void:
+	var label: String = OS.get_keycode_string(GROUP_KEYS[group])
+	if key.is_command_or_control_pressed():
+		var ids: PackedInt32Array = selected_ids()
+		_groups.store(group, ids)
+		order_note.emit("編組 %s：%d 個單位" % [label, ids.size()] if not ids.is_empty() else "編組 %s 已清除" % label)
+		return
+	var members: PackedInt32Array = _groups.members(group, func(id: int) -> bool: return _sim.unit(id) != null)
+	if not key.shift_pressed:
+		_layer.selected.clear()
+	for id: int in members:
+		if _selectable(_sim.unit(id)):
+			_layer.selected[id] = true
+	selection_changed.emit(_layer.selected.size())
+	if _groups.tap(group, Time.get_ticks_msec()) and not key.shift_pressed:
+		_focus_selection()
+
+
+## Centres the camera on the middle of the selected units.
+func _focus_selection() -> void:
+	if _layer.selected.is_empty():
+		return
+	var sum: Vector2 = Vector2.ZERO
+	for id: int in _layer.selected:
+		sum += _layer.world_pos(_sim.unit(id))
+	focus_requested.emit(sum / float(_layer.selected.size()))
 
 
 func _process(delta: float) -> void:
