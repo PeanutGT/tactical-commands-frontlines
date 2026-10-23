@@ -5,9 +5,10 @@ extends Node2D
 ## Ctrl+right-click force-attacks any unit, right-click on an own transport
 ## boards the selected infantry, H toggles hold position, X stops, R retreats,
 ## U unloads, B sets engineers to blow up or rebuild a bridge. Control groups:
-## Ctrl+5..9/0 saves the selection, 5..9/0 recalls it (twice quickly also
-## centres the camera on it), Shift+5..9/0 adds it to the selection. HQs and
-## supply trucks cannot be selected. Orders go to the simulation as
+## Ctrl+1..9 saves the selection, 1..9 recalls it (twice quickly also centres
+## the camera on it), Shift+1..9 adds it to the selection. Z / C / V give the
+## selection a line / wedge / column formation for later moves (same key again
+## turns it off). HQs and supply trucks cannot be selected. Orders go to the simulation as
 ## commands; selection itself is presentation and never enters the sim.
 
 signal selection_changed(count: int)
@@ -19,8 +20,11 @@ signal focus_requested(world: Vector2)
 ## Screen pixels the mouse must travel before a press becomes a box.
 const DRAG_THRESHOLD: float = 6.0
 const MARKER_SEC: float = 0.6
-## Number keys for control groups; 1-4 stay with the hand cards.
-const GROUP_KEYS: Array[Key] = [KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0]
+## Number keys for control groups; the hand cards use F1-F4.
+const GROUP_KEYS: Array[Key] = [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9]
+const FORMATION_KEYS: Dictionary = {
+	KEY_Z: Formation.Shape.LINE, KEY_C: Formation.Shape.WEDGE, KEY_V: Formation.Shape.COLUMN,
+}
 
 var side: int = GameMap.Side.PLAYER
 
@@ -35,6 +39,8 @@ var _drag_world: Vector2 = Vector2.ZERO
 var _marker_pos: Vector2 = Vector2.ZERO
 var _marker_left: float = 0.0
 var _groups: ControlGroups = ControlGroups.new()
+## Unit id -> Formation.Shape it moves in; missing = free.
+var _formation: Dictionary = {}
 
 
 func setup(sim: Simulation, layer: UnitLayer, style: StylePack) -> void:
@@ -101,6 +107,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		var ids: PackedInt32Array = selected_ids()
+		if FORMATION_KEYS.has(key.physical_keycode):
+			_set_formation(ids, FORMATION_KEYS[key.physical_keycode])
+			get_viewport().set_input_as_handled()
+			return
 		match key.physical_keycode:
 			KEY_X:
 				if not ids.is_empty():
@@ -142,6 +152,22 @@ func _on_group_key(group: int, key: InputEventKey) -> void:
 		_focus_selection()
 
 
+## Gives `ids` the formation `shape`, or frees them when they all have it.
+func _set_formation(ids: PackedInt32Array, shape: Formation.Shape) -> void:
+	if ids.is_empty():
+		return
+	var all_same: bool = true
+	for id: int in ids:
+		all_same = all_same and _formation.get(id, Formation.Shape.NONE) == shape
+	var next: Formation.Shape = Formation.Shape.NONE if all_same else shape
+	for id: int in ids:
+		if next == Formation.Shape.NONE:
+			_formation.erase(id)
+		else:
+			_formation[id] = next
+	order_note.emit("陣形：%s" % Formation.NAMES[next])
+
+
 ## Centres the camera on the middle of the selected units.
 func _focus_selection() -> void:
 	if _layer.selected.is_empty():
@@ -179,6 +205,9 @@ func _to_world(screen: Vector2) -> Vector2:
 ## Drops dead units from the selection; call after simulation ticks.
 func prune_dead() -> void:
 	var before: int = _layer.selected.size()
+	for id: int in _formation.keys():
+		if _sim.unit(id) == null:
+			_formation.erase(id)
 	for id: int in _layer.selected.keys():
 		if _sim.unit(id) == null:
 			_layer.selected.erase(id)
@@ -277,7 +306,51 @@ func _order_move(world: Vector2) -> void:
 	var cell: Vector2i = Vector2i((world / float(_style.cell_px)).floor())
 	if ids.is_empty() or not _sim.map.in_bounds(cell):
 		return
-	_sim.issue(SimCommand.move(side, ids, cell))
+	var shape: Formation.Shape = _formation.get(ids[0], Formation.Shape.NONE)
+	for id: int in ids:
+		if _formation.get(id, Formation.Shape.NONE) != shape:
+			shape = Formation.Shape.NONE
+	if shape == Formation.Shape.NONE or ids.size() < 2:
+		_sim.issue(SimCommand.move(side, ids, cell))
+	else:
+		_order_formation_move(ids, cell, shape)
 	_marker_pos = (Vector2(cell) + Vector2(0.5, 0.5)) * float(_style.cell_px)
 	_marker_left = MARKER_SEC
 	queue_redraw()
+
+
+## One move per unit to its slot of `shape` around `cell`, facing away from
+## where the group is now. Slots on ground the unit cannot cross shift to
+## the nearest free cell it can.
+func _order_formation_move(ids: PackedInt32Array, cell: Vector2i, shape: Formation.Shape) -> void:
+	var cell_size: float = float(_style.cell_px)
+	var at: Array[Vector2] = []
+	var centre: Vector2 = Vector2.ZERO
+	for id: int in ids:
+		var p: Vector2 = _layer.world_pos(_sim.unit(id)) / cell_size
+		at.append(p)
+		centre += p
+	centre /= float(ids.size())
+	var target: Vector2 = Vector2(cell) + Vector2(0.5, 0.5)
+	var slot_pos: Array[Vector2] = Formation.slots(shape, ids.size(), target, target - centre)
+	var pick: PackedInt32Array = Formation.assign(at, slot_pos)
+	var used: Dictionary = {}
+	for i: int in ids.size():
+		var u: SimUnit = _sim.unit(ids[i])
+		var dest: Vector2i = _free_cell(Vector2i(slot_pos[pick[i]].floor()), u.type.vehicle, used)
+		used[dest] = true
+		_sim.issue(SimCommand.move(side, PackedInt32Array([ids[i]]), dest))
+
+
+## `want`, or the closest in-bounds cell within a few steps that `vehicle`
+## can stand on and no other slot took; `want` clamped to the map otherwise.
+func _free_cell(want: Vector2i, vehicle: bool, used: Dictionary) -> Vector2i:
+	for r: int in 4:
+		for dy: int in range(-r, r + 1):
+			for dx: int in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var c: Vector2i = want + Vector2i(dx, dy)
+				if not used.has(c) and Movement.passable(_sim.map, c, vehicle):
+					return c
+	return want.clamp(Vector2i.ZERO, Vector2i(_sim.map.width - 1, _sim.map.height - 1))
