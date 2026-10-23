@@ -1,0 +1,80 @@
+{
+ "size": 64,
+ "facing": "up (-y)",
+ "units": {
+  "mbt": {
+   "scale": 1,
+   "turret_pivot": [
+    32,
+    35
+   ]
+  },
+  "heavy_tank": {
+   "scale": 1,
+   "turret_pivot": [
+    32,
+    35
+   ]
+  },
+  "light_tank": {
+   "scale": 1.15,
+   "turret_pivot": [
+    32.0,
+    34.3
+   ]
+  },
+  "tank_destroyer": {
+   "scale": 1
+  },
+  "ifv": {
+   "scale": 1,
+   "turret_pivot": [
+    30,
+    30
+   ]
+  },
+  "apc": {
+   "scale": 1,
+   "turret_pivot": [
+    37,
+    26
+   ]
+  },
+  "recon": {
+   "scale": 1.2,
+   "turret_pivot": [
+    32.0,
+    32.0
+   ]
+  },
+  "spg": {
+   "scale": 1,
+   "turret_pivot": [
+    32,
+    41
+   ]
+  },
+  "mlrs": {
+   "scale": 1
+  },
+  "aa": {
+   "scale": 1,
+   "turret_pivot": [
+    32,
+    32
+   ]
+  },
+  "truck": {
+   "scale": 1
+  },
+  "engineer": {
+   "scale": 1
+  },
+  "recovery": {
+   "scale": 1
+  },
+  "infantry": {
+   "scale": 1.4
+  }
+ }
+}
