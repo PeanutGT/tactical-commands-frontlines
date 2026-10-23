@@ -49,7 +49,7 @@ var map: GameMap
 ## Null until the player has picked a deck.
 var sim: Simulation
 var ai: AiPlayer
-var style: StylePack = StylePack.dev()
+var style: StylePack = StylePack.nato()
 var _cursor: Vector2i = Vector2i(-1, -1)
 var _tick_time: float = 0.0
 var _bridge_revision: int = 0

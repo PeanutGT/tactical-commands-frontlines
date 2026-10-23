@@ -21,6 +21,7 @@ godot --headless --path . --script res://tests/run_tests.gd
 - `scripts/data/` loading maps from disk.
 - `scripts/render/`, `scripts/input/`, `scripts/ui/` what the player sees and touches.
 - `scenes/main.tscn` the map view.
+- `art/terrain/` ground pictures (made from the generated sources by `tools/prepare_terrain.py`), `art/units/` greyscale top-down unit pictures (`gen_units.py`), `shaders/terrain.gdshader` the ground shader. `StylePack.nato()` uses them; `StylePack.dev()` is the old flat-colour look.
 - `maps/<id>/` `terrain.png` (1 px = 1 cell), `height.png` (4 grey levels), `map.json`. Map PNGs must be imported as **Image** (Import dock, Import As: Image).
 
 The earlier TypeScript + Phaser version was removed; it is in git history up to commit `5777bc0`.
