@@ -9,88 +9,36 @@ signal deck_confirmed(deck: Array[StringName], difficulty: AiPlayer.Difficulty)
 var _size: int = 0
 var _deck: Array[StringName] = []
 var _buttons: Dictionary[StringName, Button] = {}
-var _count: Label
-var _list: Label
-var _start: Button
-var _difficulty: OptionButton
+
+@onready var _count: Label = %Count
+@onready var _columns: HBoxContainer = %Columns
+@onready var _list: Label = %List
+@onready var _start: Button = %Start
+@onready var _difficulty: OptionButton = %Difficulty
 
 
-## Builds the screen for a deck of `size` cards, starting from `initial`.
+## Fills the screen for a deck of `size` cards, starting from `initial`.
+## Layout lives in deck_builder.tscn; the card list is built from the pool.
 func setup(size: int, initial: Array[StringName]) -> void:
 	_size = size
 	_deck = initial.duplicate()
-	theme = UiTheme.make()
-	set_anchors_preset(Control.PRESET_FULL_RECT)
-	mouse_filter = Control.MOUSE_FILTER_STOP
-
-	var bg: Panel = Panel.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.add_theme_stylebox_override("panel", UiTheme.panel(Color("1a1d20")))
-	add_child(bg)
-
-	var root: VBoxContainer = VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.offset_left = 24.0
-	root.offset_top = 20.0
-	root.offset_right = -24.0
-	root.offset_bottom = -20.0
-	root.add_theme_constant_override("separation", 12)
-	add_child(root)
-
-	_count = Label.new()
-	_count.add_theme_font_override("font", UiTheme.stencil(800))
-	_count.add_theme_font_size_override("font_size", 30)
-	root.add_child(_count)
-	var hint: Label = Label.new()
-	hint.text = "點卡片加入或移除；可跨勢力混搭，每張卡限一張。滑鼠停在卡片上看數值。"
-	hint.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
-	root.add_child(hint)
-
-	var cols: HBoxContainer = HBoxContainer.new()
-	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	cols.add_theme_constant_override("separation", 16)
-	root.add_child(cols)
 	for faction: StringName in Card.FACTIONS:
 		var col: VBoxContainer = VBoxContainer.new()
 		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		cols.add_child(col)
+		_columns.add_child(col)
 		var title: Label = Label.new()
 		title.text = Card.FACTION_NAMES[faction]
+		title.theme_type_variation = &"FactionTitle"
 		title.add_theme_color_override("font_color", UiTheme.faction_color(faction))
-		title.add_theme_font_size_override("font_size", 17)
 		col.add_child(title)
 		for id: StringName in Card.pool():
 			if Card.faction(id) == faction:
 				col.add_child(_card_button(id))
-
-	_list = Label.new()
-	_list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	root.add_child(_list)
-	var bottom: HBoxContainer = HBoxContainer.new()
-	bottom.alignment = BoxContainer.ALIGNMENT_END
-	bottom.add_theme_constant_override("separation", 12)
-	root.add_child(bottom)
-	var label: Label = Label.new()
-	label.text = "AI 難度"
-	bottom.add_child(label)
-	_difficulty = OptionButton.new()
+	_difficulty.clear()
 	for n: String in AiPlayer.NAMES:
 		_difficulty.add_item(n)
 	_difficulty.select(AiPlayer.Difficulty.NORMAL)
-	_difficulty.custom_minimum_size = Vector2(110, 40)
-	bottom.add_child(_difficulty)
-	_start = Button.new()
-	_start.text = "開始"
-	_start.custom_minimum_size = Vector2(160, 40)
 	_start.pressed.connect(_on_start)
-	var go: StyleBoxFlat = UiTheme.panel(UiTheme.FRIEND)
-	_start.add_theme_stylebox_override("normal", go)
-	_start.add_theme_stylebox_override("hover", UiTheme.panel(UiTheme.FRIEND.lightened(0.25)))
-	_start.add_theme_stylebox_override("pressed", go)
-	_start.add_theme_color_override("font_color", UiTheme.GRAPHITE_LIGHT)
-	_start.add_theme_color_override("font_hover_color", UiTheme.GRAPHITE_LIGHT)
-	_start.add_theme_font_size_override("font_size", 17)
-	bottom.add_child(_start)
 	_refresh()
 
 
@@ -104,8 +52,6 @@ func _card_button(id: StringName) -> Button:
 	var picked: StyleBoxFlat = UiTheme.panel(UiTheme.GRAPHITE_LIGHT, UiTheme.faction_color(Card.faction(id)), 2)
 	b.add_theme_stylebox_override("pressed", picked)
 	b.add_theme_stylebox_override("hover_pressed", picked)
-	b.add_theme_color_override("font_pressed_color", UiTheme.TEXT)
-	b.add_theme_color_override("font_hover_pressed_color", UiTheme.TEXT)
 	b.toggled.connect(func(on: bool) -> void: _toggle(id, on))
 	_buttons[id] = b
 	return b
