@@ -22,6 +22,10 @@ uniform float blend_width = 0.3;
 // How far borders wander from the cell grid, in cells.
 uniform float edge_wobble = 0.22;
 
+// Gap between buildings and their drop shadow, in cells.
+uniform float alley = 0.09;
+uniform vec2 roof_shadow = vec2(0.12, 0.14);
+
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -42,6 +46,10 @@ vec3 cell_data(ivec2 c) {
 // scales are mixed by a slow noise so the repeat is hard to spot.
 vec3 ground_color(int t, vec2 p, bool across) {
 	vec2 uv = p / tile_cells;
+	if (t == 4) {
+		// Ground between buildings: darkened pavement. Roofs go on top.
+		return texture(ground, vec3(uv, float(layer_of[2]))).rgb * 0.78;
+	}
 	float layer = float(layer_of[t]);
 	vec3 a;
 	if (t == 9) {
@@ -53,6 +61,55 @@ vec3 ground_color(int t, vec2 p, bool across) {
 		a = mix(a, b, smoothstep(0.35, 0.65, value_noise(p * 0.09)));
 	}
 	return a * tint_of[t].rgb;
+}
+
+// Building cells pair up with a neighbour (across or down, picked per 2×2
+// block) into one 20 × 40 m building, or stand alone. Writes the roof
+// rectangle in cells and an id for the building; false if `c` is no building.
+bool roof_of(ivec2 c, out vec2 rmin, out vec2 rmax, out vec2 id) {
+	if (int(round(cell_data(c).r)) != 4) {
+		return false;
+	}
+	vec2 block = vec2(c / 2);
+	ivec2 partner = hash(block) < 0.5 ? ivec2(c.x ^ 1, c.y) : ivec2(c.x, c.y ^ 1);
+	bool paired = hash(block + 7.3) < 0.75 && int(round(cell_data(partner).r)) == 4;
+	vec2 lo = vec2(paired ? min(c, partner) : c);
+	vec2 hi = vec2(paired ? max(c, partner) : c) + 1.0;
+	rmin = lo + alley * 0.5;
+	rmax = hi - alley * 0.5;
+	id = lo * 1.37 + hi * 0.71;
+	return true;
+}
+
+// Painted roof at `p` inside the roof [rmin, rmax]: flat with a lip and a
+// rooftop unit, or pitched with the half facing the top-left light brighter.
+vec3 roof_color(vec2 p, vec2 rmin, vec2 rmax, vec2 id) {
+	float h = hash(id);
+	vec3 base = h < 0.3 ? vec3(0.58, 0.58, 0.56) : (h < 0.55 ? vec3(0.40, 0.42, 0.46) : (h < 0.8 ? vec3(0.60, 0.40, 0.32) : vec3(0.33, 0.33, 0.35)));
+	base *= 0.9 + 0.2 * hash(id + 3.1);
+	// Grain from the painted rooftops picture.
+	vec3 grain = texture(ground, vec3(p / tile_cells, float(layer_of[4]))).rgb;
+	base *= 0.8 + 0.5 * (dot(grain, vec3(0.333)) - 0.35);
+	vec2 size = rmax - rmin;
+	vec2 l = (p - rmin) / size;
+	float edge = min(min(p.x - rmin.x, rmax.x - p.x), min(p.y - rmin.y, rmax.y - p.y));
+	vec3 col;
+	if (hash(id + 11.7) < 0.6) {
+		// Pitched: ridge along the long side.
+		bool along_x = size.x >= size.y;
+		float u = along_x ? l.y : l.x;
+		col = base * (u < 0.5 ? 1.1 : 0.78);
+		col = mix(col, base * 0.55, 1.0 - smoothstep(0.0, 0.025, abs(u - 0.5) * min(size.x, size.y)));
+	} else {
+		col = base * 0.95;
+		col = mix(col, base * 1.15, 1.0 - smoothstep(0.03, 0.06, edge));
+		vec2 unit = rmin + size * vec2(0.25 + 0.5 * hash(id + 5.0), 0.25 + 0.5 * hash(id + 6.0));
+		vec2 d = abs(p - unit);
+		if (max(d.x, d.y) < 0.09) {
+			col = (p.x - unit.x + p.y - unit.y < 0.0) ? vec3(0.75) : vec3(0.5);
+		}
+	}
+	return mix(col, vec3(0.12), 1.0 - smoothstep(0.0, 0.022, edge));
 }
 
 void fragment() {
@@ -83,6 +140,18 @@ void fragment() {
 	float shade = height_shade[int(round(c00.g))] * w.x + height_shade[int(round(c10.g))] * w.y
 		+ height_shade[int(round(c01.g))] * w.z + height_shade[int(round(c11.g))] * w.w;
 	col *= shade;
+
+	// Buildings: drop shadow towards the bottom-right, then the roof.
+	vec2 rmin;
+	vec2 rmax;
+	vec2 id;
+	vec2 sp = p - roof_shadow;
+	if (roof_of(ivec2(floor(sp)), rmin, rmax, id) && all(greaterThan(sp, rmin)) && all(lessThan(sp, rmax))) {
+		col *= 0.55;
+	}
+	if (roof_of(ivec2(floor(p)), rmin, rmax, id) && all(greaterThan(p, rmin)) && all(lessThan(p, rmax))) {
+		col = roof_color(p, rmin, rmax, id) * shade;
+	}
 
 	// Contour lines on cell edges where the height level changes.
 	ivec2 c = ivec2(floor(p));
