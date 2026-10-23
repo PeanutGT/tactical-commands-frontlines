@@ -3,6 +3,9 @@ extends RefCounted
 ## Shared look for every screen: a staff officer's plotting board. Graphite
 ## panels, NATO symbol colours (APP-6 friend / hostile / neutral / unknown)
 ## for sides, a CJK system font for text and a stencil face for numbers.
+## Controls get their look from res://ui/tcf_theme.tres (the project theme,
+## first written by tools/build_ui_theme.gd); these constants are for the
+## parts drawn in code and per-card colours.
 
 const TEXT: Color = Color("e6e8e3")
 const TEXT_DIM: Color = Color("959a93")
@@ -26,26 +29,6 @@ const STENCIL_PATH: String = "res://assets/fonts/big_shoulders_stencil.ttf"
 
 static var _text_font: SystemFont
 static var _stencil: Dictionary[int, FontVariation] = {}
-
-
-static func make() -> Theme:
-	var t: Theme = Theme.new()
-	t.default_font = text_font()
-	t.default_font_size = 14
-	t.set_color("font_color", "Label", TEXT)
-	t.set_stylebox("normal", "Button", panel(GRAPHITE, EDGE, 1))
-	t.set_stylebox("hover", "Button", panel(GRAPHITE_LIGHT, EDGE, 1))
-	t.set_stylebox("pressed", "Button", panel(GRAPHITE_LIGHT, FRIEND, 1))
-	t.set_stylebox("disabled", "Button", panel(Color(GRAPHITE, 0.45)))
-	t.set_stylebox("focus", "Button", panel(Color.TRANSPARENT, FRIEND, 1))
-	t.set_color("font_color", "Button", TEXT)
-	t.set_color("font_hover_color", "Button", TEXT)
-	t.set_color("font_disabled_color", "Button", Color(TEXT_DIM, 0.6))
-	for k: String in ["normal", "hover", "pressed", "disabled", "focus"]:
-		t.set_stylebox(k, "OptionButton", t.get_stylebox(k, "Button"))
-	t.set_stylebox("panel", "TooltipPanel", panel(Color(GRAPHITE, 0.98), EDGE, 1))
-	t.set_color("font_color", "TooltipLabel", TEXT)
-	return t
 
 
 static func text_font() -> SystemFont:
