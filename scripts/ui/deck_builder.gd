@@ -25,7 +25,7 @@ func setup(size: int, initial: Array[StringName]) -> void:
 
 	var bg: Panel = Panel.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.add_theme_stylebox_override("panel", UiTheme.panel(Color(0.04, 0.05, 0.04, 0.94)))
+	bg.add_theme_stylebox_override("panel", UiTheme.panel(Color(0.04, 0.05, 0.04, 1.0)))
 	add_child(bg)
 
 	var root: VBoxContainer = VBoxContainer.new()
@@ -93,6 +93,11 @@ func _card_button(id: StringName) -> Button:
 	b.text = "%s   費 %d｜權重 %d" % [Card.display_name(id), Card.cost(id), Card.weight(id)] if Card.is_unit(id) \
 		else "%s   費 %d｜支援" % [Card.display_name(id), Card.cost(id)]
 	b.tooltip_text = card_details(id)
+	var picked: StyleBoxFlat = UiTheme.panel(Color(0.13, 0.17, 0.11, 0.95), UiTheme.faction_color(Card.faction(id)), 2)
+	b.add_theme_stylebox_override("pressed", picked)
+	b.add_theme_stylebox_override("hover_pressed", picked)
+	b.add_theme_color_override("font_pressed_color", UiTheme.TEXT)
+	b.add_theme_color_override("font_hover_pressed_color", UiTheme.TEXT)
 	b.toggled.connect(func(on: bool) -> void: _toggle(id, on))
 	_buttons[id] = b
 	return b

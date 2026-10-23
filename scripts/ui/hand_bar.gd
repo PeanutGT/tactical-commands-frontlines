@@ -10,7 +10,7 @@ signal card_dropped(slot: int, card: StringName, screen_pos: Vector2)
 ## `card` is SideState.EMPTY when the drag ends.
 signal drag_changed(card: StringName)
 
-const CARD_SIZE: Vector2 = Vector2(118, 78)
+const CARD_SIZE: Vector2 = Vector2(132, 78)
 const MESSAGE_SEC: float = 2.0
 ## Keys that pick up hand slots 1-4 (number keys belong to control groups).
 const SLOT_KEYS: Array[Key] = [KEY_F1, KEY_F2, KEY_F3, KEY_F4]
@@ -73,12 +73,21 @@ func setup(sim: Simulation) -> void:
 		var v: VBoxContainer = VBoxContainer.new()
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		card.add_child(v)
+		var top: HBoxContainer = HBoxContainer.new()
+		top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var name_label: Label = Label.new()
 		name_label.add_theme_font_size_override("font_size", 15)
 		name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var key_label: Label = Label.new()
+		key_label.text = OS.get_keycode_string(SLOT_KEYS[i]) if i < SLOT_KEYS.size() else ""
+		key_label.add_theme_font_size_override("font_size", 11)
+		key_label.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
+		top.add_child(name_label)
+		top.add_child(key_label)
 		var cost_label: Label = Label.new()
 		cost_label.add_theme_font_size_override("font_size", 12)
-		v.add_child(name_label)
+		v.add_child(top)
 		v.add_child(cost_label)
 		_bar.add_child(card)
 		_cards.append(card)
