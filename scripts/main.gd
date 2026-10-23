@@ -98,6 +98,8 @@ func start_match(deck: Array[StringName], difficulty: AiPlayer.Difficulty) -> vo
 	_selection.order_note.connect(_hand.flash)
 	_selection.focus_requested.connect(_camera.center_on)
 	_hand.setup(sim)
+	_hud.setup_match(sim, _units, _camera, style)
+	_hud.minimap.focus_requested.connect(_camera.center_on)
 	_hand.drag_changed.connect(_deploy.set_card)
 	_hand.card_dropped.connect(_on_card_dropped)
 
