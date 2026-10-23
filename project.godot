@@ -20,3 +20,7 @@ window/stretch/aspect="expand"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 environment/defaults/default_clear_color=Color(0.1, 0.12, 0.09, 1)
+
+[gui]
+
+theme/custom="res://ui/tcf_theme.tres"
