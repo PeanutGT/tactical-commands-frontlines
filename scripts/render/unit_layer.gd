@@ -27,13 +27,18 @@ const FOOTPRINT_ALPHA: float = 0.28
 const TRACER_SEC: float = 0.12
 const BLAST_SEC: float = 0.4
 const WRECK_SEC: float = 1.5
-const HP_BAR: Vector2 = Vector2(1.0, 0.13)  # cells
-const HP_GOOD: Color = Color("7be05a")
-const HP_LOW: Color = Color("f0b43c")
-const HP_BG: Color = Color(0, 0, 0, 0.6)
-const ORG_GOOD: Color = Color("5ab4f0")
-const ORG_SUPPRESSED: Color = Color("f08c3c")
-const ORG_ROUTING: Color = Color("e04848")
+const HP_BAR: Vector2 = Vector2(1.0, 0.12)  # cells
+const ORG_BAR_H: float = 0.06  # cells
+## Strength bar colours by share left (above HP_MID, above HP_LOW, below).
+const HP_GOOD: Color = Color("aaffaa")
+const HP_MID: Color = Color("ffff80")
+const HP_BAD: Color = Color("ff8080")
+const HP_MID_AT: float = 0.5
+const HP_LOW_AT: float = 0.25
+const HP_BG: Color = Color(0.08, 0.09, 0.1, 0.75)
+const ORG_GOOD: Color = Color("e6e8e3")
+const ORG_SUPPRESSED: Color = Color("f0a050")
+const ORG_ROUTING: Color = Color("ff5a5a")
 const BLAST_COLOR: Color = Color("ffb04a")
 ## Retreating formations are drawn see-through.
 const RETREAT_ALPHA: float = 0.5
@@ -376,24 +381,30 @@ static func figure_offsets(n: int, per_row: int, spacing: Vector2) -> Array[Vect
 	return out
 
 
-## Health bar with the organization bar under it; organization turns orange
-## when suppressed and red with a frame when routing.
+## Strength bar split into one segment per figure, with a thinner
+## organization bar under it that turns orange when suppressed and red with a
+## frame when routing; a shield bar sits on top while add-on armour holds.
 func _draw_bars(u: SimUnit, p: Vector2, s: float) -> void:
 	var size: Vector2 = HP_BAR * s
+	var org_h: float = ORG_BAR_H * s
 	var top: Vector2 = p + Vector2(-size.x * 0.5, -0.9 * s)
+	var back: Rect2 = Rect2(top - Vector2.ONE, Vector2(size.x, size.y + org_h + 1.0) + Vector2(2, 2))
+	draw_rect(back, HP_BG)
 	var f: float = clampf(u.hp / u.type.max_hp, 0.0, 1.0)
-	draw_rect(Rect2(top, size), HP_BG)
-	draw_rect(Rect2(top, Vector2(size.x * f, size.y)), HP_GOOD if f > 0.4 else HP_LOW)
+	var hc: Color = HP_GOOD if f > HP_MID_AT else (HP_MID if f > HP_LOW_AT else HP_BAD)
+	draw_rect(Rect2(top, Vector2(size.x * f, size.y)), hc)
+	for i: int in range(1, u.type.figures):
+		var x: float = top.x + size.x * i / u.type.figures
+		draw_line(Vector2(x, top.y), Vector2(x, top.y + size.y), HP_BG, 1.0)
 	var otop: Vector2 = top + Vector2(0.0, size.y + 1.0)
 	var o: float = clampf(u.org / u.type.max_org, 0.0, 1.0)
 	var oc: Color = ORG_ROUTING if u.routing else (ORG_SUPPRESSED if u.is_suppressed() else ORG_GOOD)
-	draw_rect(Rect2(otop, size), HP_BG)
-	draw_rect(Rect2(otop, Vector2(size.x * o, size.y)), oc)
+	draw_rect(Rect2(otop, Vector2(size.x * o, org_h)), oc)
 	if u.routing:
-		draw_rect(Rect2(otop, size), ORG_ROUTING, false, 1.0)
+		draw_rect(back, ORG_ROUTING, false, 1.0)
 	if u.shield > 0.0:
-		var stop: Vector2 = top - Vector2(0.0, size.y + 1.0)
-		draw_rect(Rect2(stop, Vector2(size.x * clampf(u.shield / Support.ADDON_SHIELD, 0.0, 1.0), size.y)), SHIELD)
+		var stop: Vector2 = top - Vector2(0.0, size.y * 0.5 + 2.0)
+		draw_rect(Rect2(stop, Vector2(size.x * clampf(u.shield / Support.ADDON_SHIELD, 0.0, 1.0), size.y * 0.5)), SHIELD)
 
 
 func _draw_path(u: SimUnit, s: float) -> void:

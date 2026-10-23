@@ -12,6 +12,8 @@ const TERRAIN_NAMES: Array[String] = [
 @onready var _hint: Label = %Hint
 @onready var _score_bar: ScoreBar = %ScoreBar
 @onready var _result: Label = %Result
+@onready var minimap: Minimap = %Minimap
+@onready var _selection_panel: SelectionPanel = %SelectionPanel
 
 var _map: GameMap
 var _zoom: float = 1.0
@@ -41,6 +43,12 @@ func set_details(on: bool) -> void:
 	_help.visible = on
 	_hint.visible = not on
 	_refresh()
+
+
+## The match has started: the minimap and the selection readout go live.
+func setup_match(sim: Simulation, units: UnitLayer, camera: Camera2D, style: StylePack) -> void:
+	minimap.setup(sim, units, camera, style)
+	_selection_panel.setup(sim, units)
 
 
 func show_map(map: GameMap) -> void:
@@ -110,8 +118,6 @@ func _refresh() -> void:
 	var lines: PackedStringArray = PackedStringArray()
 	if _difficulty != "":
 		lines.append("AI %s｜誤傷扣分 %d" % [_difficulty, _penalty])
-	if _selected > 0:
-		lines.append("已選 %d 個單位" % _selected)
 	if _details:
 		var c: MapConfig = _map.config
 		lines.append("%s  %d×%d 格｜%s 公尺/格｜縮放 %.2f" % [c.name, _map.width, _map.height, String.num(c.meters_per_cell), _zoom])
