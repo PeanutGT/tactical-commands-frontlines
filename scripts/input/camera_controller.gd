@@ -43,6 +43,11 @@ func zoom_at(next_zoom: float, screen: Vector2) -> void:
 	_apply(z, CameraMath.position_for_zoom_at(position, _view(), zoom.x, z, screen))
 
 
+## Moves the view so `world` sits in the middle, keeping the zoom.
+func center_on(world: Vector2) -> void:
+	_apply(zoom.x, world)
+
+
 func pan_screen(delta: Vector2) -> void:
 	_apply(zoom.x, position - delta / zoom.x)
 
