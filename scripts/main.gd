@@ -149,7 +149,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _show_result() -> void:
 	var r: String = RESULT_TEXT[sim.winner] if sim.winner != Simulation.DRAW else RESULT_TEXT[2]
-	_hud.show_result("%s｜%s\n積分 我方 %d：敵方 %d" % [r, END_TEXT[sim.end_reason], sim.score[0], sim.score[1]])
+	_hud.show_result("%s\n%s｜%d：%d" % [r, END_TEXT[sim.end_reason], sim.score[0], sim.score[1]], sim.winner if sim.winner != Simulation.DRAW else -1)
 
 
 func _screen_cell(screen_pos: Vector2) -> Vector2i:

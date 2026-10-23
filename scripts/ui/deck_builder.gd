@@ -25,7 +25,7 @@ func setup(size: int, initial: Array[StringName]) -> void:
 
 	var bg: Panel = Panel.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.add_theme_stylebox_override("panel", UiTheme.panel(Color(0.04, 0.05, 0.04, 1.0)))
+	bg.add_theme_stylebox_override("panel", UiTheme.panel(Color("1a1d20")))
 	add_child(bg)
 
 	var root: VBoxContainer = VBoxContainer.new()
@@ -38,7 +38,8 @@ func setup(size: int, initial: Array[StringName]) -> void:
 	add_child(root)
 
 	_count = Label.new()
-	_count.add_theme_font_size_override("font_size", 20)
+	_count.add_theme_font_override("font", UiTheme.stencil(800))
+	_count.add_theme_font_size_override("font_size", 30)
 	root.add_child(_count)
 	var hint: Label = Label.new()
 	hint.text = "點卡片加入或移除；可跨勢力混搭，每張卡限一張。滑鼠停在卡片上看數值。"
@@ -82,6 +83,13 @@ func setup(size: int, initial: Array[StringName]) -> void:
 	_start.text = "開始"
 	_start.custom_minimum_size = Vector2(160, 40)
 	_start.pressed.connect(_on_start)
+	var go: StyleBoxFlat = UiTheme.panel(UiTheme.FRIEND)
+	_start.add_theme_stylebox_override("normal", go)
+	_start.add_theme_stylebox_override("hover", UiTheme.panel(UiTheme.FRIEND.lightened(0.25)))
+	_start.add_theme_stylebox_override("pressed", go)
+	_start.add_theme_color_override("font_color", UiTheme.GRAPHITE_LIGHT)
+	_start.add_theme_color_override("font_hover_color", UiTheme.GRAPHITE_LIGHT)
+	_start.add_theme_font_size_override("font_size", 17)
 	bottom.add_child(_start)
 	_refresh()
 
@@ -93,7 +101,7 @@ func _card_button(id: StringName) -> Button:
 	b.text = "%s   費 %d｜權重 %d" % [Card.display_name(id), Card.cost(id), Card.weight(id)] if Card.is_unit(id) \
 		else "%s   費 %d｜支援" % [Card.display_name(id), Card.cost(id)]
 	b.tooltip_text = card_details(id)
-	var picked: StyleBoxFlat = UiTheme.panel(Color(0.13, 0.17, 0.11, 0.95), UiTheme.faction_color(Card.faction(id)), 2)
+	var picked: StyleBoxFlat = UiTheme.panel(UiTheme.GRAPHITE_LIGHT, UiTheme.faction_color(Card.faction(id)), 2)
 	b.add_theme_stylebox_override("pressed", picked)
 	b.add_theme_stylebox_override("hover_pressed", picked)
 	b.add_theme_color_override("font_pressed_color", UiTheme.TEXT)
